@@ -1,0 +1,14 @@
+[project]
+name = "cirkit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "~=3.10"
+dependencies = [
+    "jupyter>=1.1.1",
+    "libcirkit>=0.2.1",
+    "matplotlib>=3.10.1",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+    "tqdm>=4.67.1",
+]
