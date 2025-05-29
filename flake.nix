@@ -2,7 +2,8 @@
   description = "Hello world flake using uv2nix";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    #nixpkgs.url = "github:sepiabrown/nixpkgs";
+    # nixpkgs.url = "github:ConnorBaker/nixpkgs/feat/cudaPackages-fixed-output-derivations";
 
     pyproject-nix = {
       url = "github:pyproject-nix/pyproject.nix";
@@ -51,31 +52,63 @@
         # };
       };
 
+      hacks = pkgs.callPackages pyproject-nix.build.hacks {};
+
       # Extend generated overlay with build fixups
       #
       # Uv2nix can only work with what it has, and uv.lock is missing essential metadata to perform some builds.
       # This is an additional overlay implementing build fixups.
       # See:
       # - https://pyproject-nix.github.io/uv2nix/FAQ.html
-      pyprojectOverrides = _final: _prev: {
+      cudaLibs = [
+        pkgs.cudaPackages.cudnn
+        pkgs.cudaPackages.nccl
+        pkgs.cudaPackages.cutensor
+        pkgs.cudaPackages.cusparselt
+        pkgs.cudaPackages.libcublas
+        pkgs.cudaPackages.libcusparse
+        pkgs.cudaPackages.libcusolver
+        pkgs.cudaPackages.libcurand
+        pkgs.cudaPackages.cuda_gdb
+        pkgs.cudaPackages.cuda_nvcc
+        pkgs.cudaPackages.cuda_cudart
+        pkgs.cudaPackages.cudatoolkit
+        pkgs.cowsay
+      ];
+
+      cudaLDLibraryPath = pkgs.lib.makeLibraryPath cudaLibs;
+
+      pyprojectOverrides = final: prev: {
         # Implement build fixups here.
         # Note that uv2nix is _not_ using Nixpkgs buildPythonPackage.
         # It's using https://pyproject-nix.github.io/pyproject.nix/build.html
+        torch = prev.torch.overrideAttrs (old: {
+          buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
+        });
+        torchvision = prev.torchvision.overrideAttrs (old: {
+          buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;# ++ [ final.torch ];
+          postFixup = ''
+            addAutoPatchelfSearchPath "${final.torch}"
+          '';
+        });
+        nvidia-cusolver-cu12 = prev.nvidia-cusolver-cu12.overrideAttrs (old: {
+          buildInputs = (old.buildInputs or []) ++ cudaLibs;
+        });
+        nvidia-cusparse-cu12 = prev.nvidia-cusparse-cu12.overrideAttrs (old: {
+          buildInputs = (old.buildInputs or []) ++ cudaLibs;
+        });
       };
 
+
       # This example is only using x86_64-linux
+      # pkgs = nixpkgs.legacyPackages.x86_64-linux;
       pkgs = import nixpkgs {
-            config = {
-              allowUnfree = true;
-              cudaSupport = true;
-              };
-            system = "x86_64-linux";
-            
-          };
-      #pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        system = "x86_64-linux";
+        config.allowUnfree = true;
+      };
 
       # Use Python 3.12 from nixpkgs
-      python = pkgs.python310;
+      python = pkgs.python312;
 
       # Construct package set
       pythonSet =
@@ -96,13 +129,29 @@
       # Package a virtual environment as our main application.
       #
       # Enable no optional dependencies for production build.
-      packages.x86_64-linux.default = pythonSet.mkVirtualEnv "hello-world-env" workspace.deps.default;
+      packages.x86_64-linux.default = pythonSet.mkVirtualEnv "msc-cirkit-env" (workspace.deps.default // {
+        # torch = [ ];
+      });
 
       # Make hello runnable with `nix run`
       apps.x86_64-linux = {
-        default = {
+        default = self.apps.x86_64-linux.example;
+        train = {
           type = "app";
-          program = "${self.packages.x86_64-linux.default}/bin/hello";
+          program = "${self.packages.x86_64-linux.default}/bin/train_script";
+        };
+        example = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "example-wrapper";
+            runtimeInputs = [ self.packages.x86_64-linux.default ];
+            text = ''
+              ${./data/get_mnist.sh}
+              export NCCL_P2P_DISABLE="1" NCCL_IB_DISABLE="1"
+              exec train_script "$@"
+            '';
+            inheritPath = true;
+          }}/bin/example-wrapper";
         };
       };
 
@@ -127,7 +176,7 @@
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               # Python libraries often load native shared objects using dlopen(3).
               # Setting LD_LIBRARY_PATH makes the dynamic library loader aware of libraries without using RPATH for lookup.
-              LD_LIBRARY_PATH = lib.makeLibraryPath pkgs.pythonManylinuxPackages.manylinux1;
+              LD_LIBRARY_PATH = lib.makeLibraryPath (__filter (p: p.pname != "glibc") pkgs.pythonManylinuxPackages.manylinux1);
             };
           shellHook = ''
             unset PYTHONPATH
@@ -157,15 +206,14 @@
 
                 # Apply fixups for building an editable package of your workspace packages
                 (final: prev: {
-                  hello-world = prev.hello-world.overrideAttrs (old: {
+                  msc-cirkit-pytorch = prev.msc-cirkit-pytorch.overrideAttrs (old: {
                     # It's a good idea to filter the sources going into an editable build
                     # so the editable package doesn't have to be rebuilt on every change.
                     src = lib.fileset.toSource {
                       root = old.src;
                       fileset = lib.fileset.unions [
                         (old.src + "/pyproject.toml")
-                        (old.src + "/README.md")
-                        (old.src + "/src/hello_world/__init__.py")
+                        
                       ];
                     };
 
@@ -189,7 +237,7 @@
             # Build virtual environment, with local packages being editable.
             #
             # Enable all optional dependencies for development.
-            virtualenv = editablePythonSet.mkVirtualEnv "hello-world-dev-env" workspace.deps.all;
+            virtualenv = editablePythonSet.mkVirtualEnv "msc-cirkit-dev-env" workspace.deps.all;
 
           in
           pkgs.mkShell {
@@ -210,17 +258,11 @@
             };
 
             shellHook = ''
-              export CUDA_PATH=${pkgs.cudatoolkit}
-                export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-                export OLLAMA_MAX_LOADED_MODELS=2;
-                export LD_LIBRARY_PATH=${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.ncurses5}/lib
-                export EXTRA_LDFLAGS="-L/lib -L${pkgs.linuxPackages.nvidia_x11}/lib"
-                export EXTRA_CCFLAGS="-I/usr/include"
               # Undo dependency propagation by nixpkgs.
               unset PYTHONPATH
 
               # Get repository root using git. This is expanded at runtime by the editable `.pth` machinery.
-              export REPO_ROOT=$(git rev-parse --show-toplevel)
+              export REPO_ROOT=$(git rev-parse --show-toplevel) NCCL_P2P_DISABLE="1" NCCL_IB_DISABLE="1"
             '';
           };
       };
