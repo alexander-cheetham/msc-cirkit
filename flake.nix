@@ -1,5 +1,5 @@
 {
-  description = "cirkit-flake";
+  description = "Hello world flake using uv2nix";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -64,7 +64,15 @@
       };
 
       # This example is only using x86_64-linux
-      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      pkgs = import nixpkgs {
+            config = {
+              allowUnfree = true;
+              cudaSupport = true;
+              };
+            system = "x86_64-linux";
+            
+          };
+      #pkgs = nixpkgs.legacyPackages.x86_64-linux;
 
       # Use Python 3.12 from nixpkgs
       python = pkgs.python310;
@@ -88,13 +96,13 @@
       # Package a virtual environment as our main application.
       #
       # Enable no optional dependencies for production build.
-      packages.x86_64-linux.default = pythonSet.mkVirtualEnv "cirkit-env" workspace.deps.default;
+      packages.x86_64-linux.default = pythonSet.mkVirtualEnv "hello-world-env" workspace.deps.default;
 
       # Make hello runnable with `nix run`
       apps.x86_64-linux = {
         default = {
           type = "app";
-          program = "${self.packages.x86_64-linux.default}/bin/cirkit-run";
+          program = "${self.packages.x86_64-linux.default}/bin/hello";
         };
       };
 
@@ -202,6 +210,12 @@
             };
 
             shellHook = ''
+              export CUDA_PATH=${pkgs.cudatoolkit}
+                export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+                export OLLAMA_MAX_LOADED_MODELS=2;
+                export LD_LIBRARY_PATH=${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.ncurses5}/lib
+                export EXTRA_LDFLAGS="-L/lib -L${pkgs.linuxPackages.nvidia_x11}/lib"
+                export EXTRA_CCFLAGS="-I/usr/include"
               # Undo dependency propagation by nixpkgs.
               unset PYTHONPATH
 
