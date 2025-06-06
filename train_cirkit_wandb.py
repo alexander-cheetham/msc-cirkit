@@ -226,9 +226,24 @@ def define_circuit(rg: RegionGraph,
 # ──────────────────────────────────────────────────────────────────────
 from cirkit.pipeline import compile as cirkit_compile
 from torch.cuda.amp import autocast, GradScaler        # mixed precision (optional)
+from cirkit.pipeline import compile
+from cirkit.pipeline import PipelineContext
+
+
+
 
 def train_one_run(cfg):
     """Single experiment driven by values inside wandb.config (cfg)."""
+
+    ctx = PipelineContext(
+    backend='torch',      # Use the PyTorch backend
+    # Specify the backend compilation flags next
+    semiring='lse-sum',   # Use the 'lse-sum' semiring
+    fold=True,            # Enable circuit folding
+    # -------- Enable layer optimizations -------- #
+    optimize=False, # NOTE: THIS IS AN IMPORTANT FLAG (false for kronecker true for einsum)
+    # -------------------------------------------- #
+)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
     train_dl, test_dl, X = make_dataloaders(
         n_points   = cfg.dataset_size,
@@ -242,7 +257,7 @@ def train_one_run(cfg):
                          num_input_units = cfg.num_input_units,
                          num_sum_units   = cfg.num_sum_units,
                          sum_prod_layer  = cfg.sum_product)
-    net = cirkit_compile(net).to(device)
+    net = ctx.compile(net).to(device)
 
     # Optimiser & scaler
     opt     = torch.optim.Adam(net.parameters(), lr=cfg.lr)
