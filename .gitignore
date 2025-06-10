@@ -5,5 +5,5 @@ wandb/
 datasets/
 flake.nix
 __pycache__/
-uv.lock
+
 flake.lock
