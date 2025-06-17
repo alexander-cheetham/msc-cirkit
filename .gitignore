@@ -4,5 +4,3 @@
 wandb/
 datasets/
 __pycache__/
-
-flake.lock
