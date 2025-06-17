@@ -3,7 +3,6 @@
 .venv
 wandb/
 datasets/
-flake.nix
 __pycache__/
 
 flake.lock
