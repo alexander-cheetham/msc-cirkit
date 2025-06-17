@@ -35,7 +35,6 @@
     }:
     let
       inherit (nixpkgs) lib;
-
       # Load a uv workspace from a workspace root.
       # Uv2nix treats all uv projects as workspace projects.
       workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
@@ -75,6 +74,12 @@
         pkgs.cudaPackages.cudatoolkit
         pkgs.cowsay
       ];
+      graphvizlibs = [
+        pkgs.python312Packages.setuptools
+        pkgs.python312Packages.wheel
+        pkgs.graphviz
+        pkgs.pkg-config
+      ];
 
       cudaLDLibraryPath = pkgs.lib.makeLibraryPath cudaLibs;
 
@@ -97,7 +102,12 @@
         nvidia-cusparse-cu12 = prev.nvidia-cusparse-cu12.overrideAttrs (old: {
           buildInputs = (old.buildInputs or []) ++ cudaLibs;
         });
-      };
+         _ = builtins.trace ">>> Adding setuptools to nativeBuildInputs" null;
+        pygraphviz = prev.pygraphviz.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ final.setuptools ];
+          buildInputs = (old.buildInputs or []) ++ [ pkgs.graphviz pkgs.pkg-config ];
+        });
+      };    
 
 
       # This example is only using x86_64-linux
@@ -133,28 +143,6 @@
         # torch = [ ];
       });
 
-      # Make hello runnable with `nix run`
-      apps.x86_64-linux = {
-        default = self.apps.x86_64-linux.example;
-        train = {
-          type = "app";
-          program = "${self.packages.x86_64-linux.default}/bin/train_script";
-        };
-        example = {
-          type = "app";
-          program = "${pkgs.writeShellApplication {
-            name = "example-wrapper";
-            runtimeInputs = [ self.packages.x86_64-linux.default ];
-            text = ''
-              ${./data/get_mnist.sh}
-              export NCCL_P2P_DISABLE="1" NCCL_IB_DISABLE="1"
-              exec train_script "$@"
-            '';
-            inheritPath = true;
-          }}/bin/example-wrapper";
-        };
-      };
-
       # This example provides two different modes of development:
       # - Impurely using uv to manage virtual environments
       # - Pure development using uv2nix to manage virtual environments
@@ -180,6 +168,7 @@
             };
           shellHook = ''
             unset PYTHONPATH
+            
           '';
         };
 
@@ -203,7 +192,6 @@
             editablePythonSet = pythonSet.overrideScope (
               lib.composeManyExtensions [
                 editableOverlay
-
                 # Apply fixups for building an editable package of your workspace packages
                 (final: prev: {
                   msc-cirkit-pytorch = prev.msc-cirkit-pytorch.overrideAttrs (old: {
@@ -227,6 +215,7 @@
                       old.nativeBuildInputs
                       ++ final.resolveBuildSystem {
                         editables = [ ];
+                        setuptools = [ ];
                       };
                   });
 
@@ -263,6 +252,11 @@
 
               # Get repository root using git. This is expanded at runtime by the editable `.pth` machinery.
               export REPO_ROOT=$(git rev-parse --show-toplevel) NCCL_P2P_DISABLE="1" NCCL_IB_DISABLE="1"
+              export SHELL=${pkgs.zsh}/bin/zsh
+              exec zsh -l
+
+              # Re-source your zshrc
+              source ~/.zshrc
             '';
           };
       };
