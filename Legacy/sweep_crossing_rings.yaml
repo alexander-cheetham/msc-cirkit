@@ -1,0 +1,33 @@
+method: random           # >1 000 000 combos → random or bayesian is more tractable
+name: cirkit_two_ring_sweep
+program: train_cirkit_wandb.py
+command:
+  - ${env}                         # W&B expands this to the run-time env vars
+  - python
+  - ${program}                     # ⇒ python train_cirkit_wandb.py
+  - ${args}   
+metric:
+  name: test/nll         # minimise NLL
+  goal: minimize
+parameters:
+  num_input_units:
+    distribution: int_uniform
+    min: 1
+    max: 1000
+  num_sum_units:
+    distribution: int_uniform
+    min: 1
+    max: 1000
+  sum_product:
+    values: [cp, tucker]
+  lr:
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 1e-1
+  batch_size:
+    values: [128, 256, 512]
+  epochs:
+    values: [1000, 2000, 5000]
+  mixed_precision:
+    values: [True, False]
+
