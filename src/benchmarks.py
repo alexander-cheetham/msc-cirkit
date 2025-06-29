@@ -116,33 +116,11 @@ class WandbCircuitBenchmark:
 
         nystrom_circuit = copy.deepcopy(original_circuit)
         replace_sum_layers(nystrom_circuit,rank=rank)
+        fix_address_book_modules(nystrom_circuit)
 
         # Create test input
         test_input = self.create_test_input(batch_size, n_input, self.config.device)
-
-        from cirkit.backend.torch.layers.inner import TorchSumLayer  # Add this import
-        addr_book = nystrom_circuit._address_book
-
-        
-        
-        # Apply the fix
-        if fix_address_book_modules(nystrom_circuit):
-            print("\n✓ Address book updated successfully!")
-            
-            # Verify the fix
-            print("\n=== VERIFYING FIX ===")
-            for i, entry in enumerate(addr_book):
-                if hasattr(entry, 'module') and isinstance(entry.module, TorchSumLayer):
-                    print(f"Entry {i} module: {type(entry.module).__name__}")
-                    print(f"  Is NystromSumLayer? {isinstance(entry.module, NystromSumLayer)}")
-            
-            # Test the circuit
-            print("\n=== TESTING CIRCUIT ===")
-            output = nystrom_circuit(test_input)
-            print(f"✓ Output shape: {output.shape}")
-        else:
-            print("\n✗ Failed to update address book")
-                
+      
         # Time forward passes
         orig_times = self.time_forward_pass(
             original_circuit, test_input, 
