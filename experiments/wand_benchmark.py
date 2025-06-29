@@ -28,13 +28,21 @@ def main():
     #     experiment_name="full_benchmark_large_scale"
     # )
 
+    # config = BenchmarkConfig(
+    #     input_units=[50, 70, 100, 120],        # Creates: 2500, 4900, 10000, 14400
+    #     sum_units=[50, 70, 100, 120],
+    #     ranks=[50, 100, 200, 400, 600],        # Higher ranks for larger matrices
+    #     batch_sizes=[256, 512, 1024],          # Larger batches
+    #     project_name="kronecker-vs-nystrom",
+    #     experiment_name="full_benchmark_very_large"
+    # )
     config = BenchmarkConfig(
-        input_units=[50, 70, 100, 120],        # Creates: 2500, 4900, 10000, 14400
-        sum_units=[50, 70, 100, 120],
-        ranks=[50, 100, 200, 400, 600],        # Higher ranks for larger matrices
-        batch_sizes=[256, 512, 1024],          # Larger batches
+        input_units=[50, 70, 100, 120,200],        # Creates: 2500, 4900, 10000, 14400
+        sum_units=[50, 70, 100, 120,200],
+        ranks=[50, 100, 200, 400, 600, 2000,5000, 10000,20000],        # Higher ranks for larger matrices
+        batch_sizes=[256, 512],          # Larger batches
         project_name="kronecker-vs-nystrom",
-        experiment_name="full_benchmark_very_large"
+        experiment_name="full_benchmark_very_large_more_ranks"
     )
     
     print(f"Starting wandb experiment on {config.device}")
