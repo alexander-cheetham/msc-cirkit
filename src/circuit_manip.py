@@ -103,4 +103,40 @@ def replace_sum_layers(module: nn.Module, *, rank: int) -> None:
             # descend the tree (recursion pattern used in StackOverflow example) :contentReference[oaicite:2]{index=2}
             replace_sum_layers(module=child, rank=rank)
 
+def fix_address_book_modules(circuit, verbose=False) -> bool:
+    """Replace old TorchSumLayer with NystromSumLayer in address book"""
+    if not hasattr(circuit, '_address_book'):
+        return False
 
+    addr_book = circuit._address_book
+
+    # Find the NystromSumLayer in the circuit
+    nystrom_layer = None
+    for name, module in circuit.named_modules():
+        if isinstance(module, NystromSumLayer):
+            nystrom_layer = module
+            if verbose:
+                print(f"Found NystromSumLayer at: {name}")
+            break
+
+    if nystrom_layer is None:
+        if verbose:
+            print("ERROR: No NystromSumLayer found in circuit!")
+        return False
+
+    # Update _entry_modules
+    if hasattr(addr_book, '_entry_modules'):
+        for i, module in enumerate(addr_book._entry_modules):
+            if verbose:
+                print(f"Entry {i}: {type(module).__name__ if module else 'None'}")
+
+            if isinstance(module, TorchSumLayer) and not isinstance(module, NystromSumLayer):
+                addr_book._entry_modules[i] = nystrom_layer
+
+                # Verify the update
+                if verbose:
+                    print(f"  After update: {type(addr_book._entry_modules[i]).__name__}")
+                    print(f"  Is NystromSumLayer? {isinstance(addr_book._entry_modules[i], NystromSumLayer)}")
+                return True
+
+    return False

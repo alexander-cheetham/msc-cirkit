@@ -8,13 +8,14 @@ from tqdm import tqdm
 
 from .config import BenchmarkConfig
 from nystromlayer import NystromSumLayer
-from .circuit_manip import build_and_compile_circuit,replace_sum_layers
+from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
 from .profilers import WandbMemoryProfiler, FLOPCounter
 import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
 import wandb
 wandb.require("legacy-service")    
+
 
 
 class WandbCircuitBenchmark:
@@ -86,6 +87,7 @@ class WandbCircuitBenchmark:
             "median": np.median(times)
         }
     
+    
     def benchmark_single_configuration(
         self, 
         n_input: int, 
@@ -110,12 +112,37 @@ class WandbCircuitBenchmark:
         original_circuit = build_and_compile_circuit(n_input, n_sum)
         original_circuit = original_circuit.to(self.config.device).eval()
 
+        
+
         nystrom_circuit = copy.deepcopy(original_circuit)
         replace_sum_layers(nystrom_circuit,rank=rank)
-        
+
         # Create test input
         test_input = self.create_test_input(batch_size, n_input, self.config.device)
+
+        from cirkit.backend.torch.layers.inner import TorchSumLayer  # Add this import
+        addr_book = nystrom_circuit._address_book
+
         
+        
+        # Apply the fix
+        if fix_address_book_modules(nystrom_circuit):
+            print("\n✓ Address book updated successfully!")
+            
+            # Verify the fix
+            print("\n=== VERIFYING FIX ===")
+            for i, entry in enumerate(addr_book):
+                if hasattr(entry, 'module') and isinstance(entry.module, TorchSumLayer):
+                    print(f"Entry {i} module: {type(entry.module).__name__}")
+                    print(f"  Is NystromSumLayer? {isinstance(entry.module, NystromSumLayer)}")
+            
+            # Test the circuit
+            print("\n=== TESTING CIRCUIT ===")
+            output = nystrom_circuit(test_input)
+            print(f"✓ Output shape: {output.shape}")
+        else:
+            print("\n✗ Failed to update address book")
+                
         # Time forward passes
         orig_times = self.time_forward_pass(
             original_circuit, test_input, 

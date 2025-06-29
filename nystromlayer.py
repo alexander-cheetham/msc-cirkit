@@ -100,6 +100,7 @@ class NystromSumLayer(TorchSumLayer):
         # ------------------------------------------------------------------
         # 0 · Call the parent ctor with the same signature it expects
         # ------------------------------------------------------------------
+
         super().__init__(
             num_input_units=original_layer.num_input_units,
             num_output_units=original_layer.num_output_units,
@@ -108,7 +109,6 @@ class NystromSumLayer(TorchSumLayer):
             semiring=original_layer.semiring,
             num_folds=original_layer.num_folds,
         )
-
         # ------------------------------------------------------------------
         # 1 · Rank bookkeeping
         # ------------------------------------------------------------------
@@ -125,6 +125,7 @@ class NystromSumLayer(TorchSumLayer):
             self._build_factors_from()
         del self.weight 
 
+    
     # ------------------------------------------------------------------
     # 3 · We no longer need the dense weight inside the compressed layer.
     #     Replace it with a lightweight property to keep TorchSumLayer’s
@@ -146,9 +147,6 @@ class NystromSumLayer(TorchSumLayer):
     # Optional: expose a virtual dense weight for code that still calls
     # layer.weight() even after compression.
     # # ------------------------------------------------------------------
-    # def weight(self) -> torch.Tensor:
-    #     # (F, K_o, K_i) reconstructed on-the-fly
-    #     return torch.einsum("fok,fik->fok", self.U, self.V.transpose(-2, -1))
 
     def _get_name(self) -> str:          # nn.Module.__repr__ calls this
         return self.__class__.__name__
@@ -157,6 +155,7 @@ class NystromSumLayer(TorchSumLayer):
     # forward pass is unchanged from earlier answer
     # ------------------------------------------------------------------
     def forward(self, x):
+        x = x.permute(0, 2, 1, 3).flatten(start_dim=2)
         temp = torch.einsum("fbi,fir->fbr", x, self.V)
         return torch.einsum("fbr,for->fbo", temp, self.U)
 
