@@ -1,8 +1,13 @@
-import torch
 import pytest
 
+try:
+    import torch
+except Exception:  # pragma: no cover - torch missing
+    torch = None
+    pytest.skip("torch not installed", allow_module_level=True)
+
 try:  # pragma: no cover - skip if cirkit missing
-    from nystromlayer import NystromSumLayer
+    from nystromlayer import NystromSumLayer, NystromSumLayer_old
 except Exception:  # pragma: no cover - cirkit missing
     pytest.skip("cirkit library not installed", allow_module_level=True)
 
@@ -70,3 +75,34 @@ def test_new_matches_old():
     layer._build_factors_from(orig, pivots=pivots)
     approx = layer.weight
     assert torch.allclose(approx, baseline, atol=1e-5)
+
+
+@pytest.mark.skipif(TorchSumLayer is None, reason="cirkit library not installed")
+def test_new_faster_than_old():
+    torch.manual_seed(0)
+
+    F, Ko_base, Ki_base = 2, 8, 8
+    base = torch.randn(F, Ko_base, Ki_base)
+
+    def weight_fn():
+        kron = [torch.kron(base[f], base[f]) for f in range(F)]
+        return torch.stack(kron, dim=0)
+
+    weight_fn._nodes = [lambda: base]
+
+    orig = TorchSumLayer(
+        num_input_units=Ki_base**2,
+        num_output_units=Ko_base**2,
+        arity=1,
+        weight=weight_fn,
+        semiring=None,
+        num_folds=F,
+    )
+    rank = 4
+
+    import timeit
+
+    t_old = timeit.timeit(lambda: NystromSumLayer_old(orig, rank), number=3)
+    t_new = timeit.timeit(lambda: NystromSumLayer(orig, rank=rank), number=3)
+
+    assert t_new < t_old
