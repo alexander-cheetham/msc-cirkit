@@ -149,107 +149,107 @@ class WandbCircuitBenchmark:
                 self.config.num_warmup, self.config.num_trials
             )
 
-        # Log timing distributions
-        wandb.log({
-            "timing/original_mean_ms": orig_times["mean"] * 1000,
-            "timing/original_std_ms": orig_times["std"] * 1000,
-            "timing/nystrom_mean_ms": nystrom_times["mean"] * 1000,
-            "timing/nystrom_std_ms": nystrom_times["std"] * 1000,
-            "timing/speedup": orig_times["mean"] / nystrom_times["mean"],
-            "step": step
-        })
-        
-        # Memory profiling with wandb logging
-        orig_memory = WandbMemoryProfiler.profile_and_log(
-            original_circuit, test_input, 
-            device=self.config.device, 
-            prefix="memory/original"
-        )
-        
-        nystrom_memory = WandbMemoryProfiler.profile_and_log(
-            nystrom_circuit, test_input,
-            device=self.config.device,
-            prefix="memory/nystrom"
-        )
-        
-        # FLOP counting
-        F = 1  # Number of folds
-        orig_flops = FLOPCounter.kronecker_forward(batch_size, F, n_sum, n_input)
-        nystrom_flops = FLOPCounter.nystrom_forward(batch_size, F, n_sum, n_input, rank)
-        
-        wandb.log({
-            "flops/original_gflops": orig_flops / 1e9,
-            "flops/nystrom_gflops": nystrom_flops / 1e9,
-            "flops/reduction": 1 - (nystrom_flops / orig_flops),
-            "step": step
-        })
-        
-        # Approximation metrics
-        with torch.no_grad():
-            orig_output = original_circuit(test_input)
-            nystrom_output = nystrom_circuit(test_input)
-
-            # TODO: verify that these formulas for NLL and KL divergence are
-            # consistent with how the circuits represent probabilities. The
-            # current implementation assumes the circuit outputs log
-            # likelihoods for each sample.
-
-            nll_per_sample = -nystrom_output
-            nll = nll_per_sample.mean()
-
-            p_orig = orig_output.exp()
-            kl_per_sample = p_orig * (orig_output - nystrom_output)
-            kl_div = kl_per_sample.mean()
-
+            # Log timing distributions
             wandb.log({
-                "accuracy/nll": nll.item(),
-                "accuracy/kl_div": kl_div.item(),
-                "accuracy/nll_std": nll_per_sample.std().item(),
-                "accuracy/kl_std": kl_per_sample.std().item(),
-                "accuracy/kl_max": kl_per_sample.max().item(),
+                "timing/original_mean_ms": orig_times["mean"] * 1000,
+                "timing/original_std_ms": orig_times["std"] * 1000,
+                "timing/nystrom_mean_ms": nystrom_times["mean"] * 1000,
+                "timing/nystrom_std_ms": nystrom_times["std"] * 1000,
+                "timing/speedup": orig_times["mean"] / nystrom_times["mean"],
                 "step": step
             })
-        
-        # Calculate all metrics
-        speedup = orig_times["mean"] / nystrom_times["mean"]
-        theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
-        memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
-        efficiency = speedup / theoretical_speedup
-        
-        # Update summary metrics
-        self.summary_metrics["speedups"].append(speedup)
-        self.summary_metrics["memory_reductions"].append(memory_reduction)
-        self.summary_metrics["kl_divs"].append(kl_div.item())
-        self.summary_metrics["efficiencies"].append(efficiency)
-        
-        # Add row to results table
-        self.results_table.add_data(
-            n_input, n_sum, rank, batch_size, matrix_label,
-            orig_times["mean"] * 1000, nystrom_times["mean"] * 1000,
-            speedup, theoretical_speedup,
-            orig_memory, nystrom_memory, memory_reduction,
-            orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-            nll.item(), kl_div.item(), efficiency
-        )
-        
-        # Log efficiency metrics
-        wandb.log({
-            "efficiency/actual_vs_theoretical": efficiency,
-            "efficiency/memory_reduction": memory_reduction,
-            "efficiency/speedup": speedup,
-            "step": step
-        })
-        return {
-            'n_input': n_input,
-            'n_sum': n_sum,
-            'rank': rank,
-            'batch_size': batch_size,
-            'speedup': speedup,
-            'memory_reduction': memory_reduction,
-            'nll': nll.item(),
-            'kl_div': kl_div.item(),
-            'efficiency': efficiency
-        }
+            
+            # Memory profiling with wandb logging
+            orig_memory = WandbMemoryProfiler.profile_and_log(
+                original_circuit, test_input, 
+                device=self.config.device, 
+                prefix="memory/original"
+            )
+            
+            nystrom_memory = WandbMemoryProfiler.profile_and_log(
+                nystrom_circuit, test_input,
+                device=self.config.device,
+                prefix="memory/nystrom"
+            )
+            
+            # FLOP counting
+            F = 1  # Number of folds
+            orig_flops = FLOPCounter.kronecker_forward(batch_size, F, n_sum, n_input)
+            nystrom_flops = FLOPCounter.nystrom_forward(batch_size, F, n_sum, n_input, rank)
+            
+            wandb.log({
+                "flops/original_gflops": orig_flops / 1e9,
+                "flops/nystrom_gflops": nystrom_flops / 1e9,
+                "flops/reduction": 1 - (nystrom_flops / orig_flops),
+                "step": step
+            })
+            
+            # Approximation metrics
+            with torch.no_grad():
+                orig_output = original_circuit(test_input)
+                nystrom_output = nystrom_circuit(test_input)
+
+                # TODO: verify that these formulas for NLL and KL divergence are
+                # consistent with how the circuits represent probabilities. The
+                # current implementation assumes the circuit outputs log
+                # likelihoods for each sample.
+
+                nll_per_sample = -nystrom_output
+                nll = nll_per_sample.mean()
+
+                p_orig = orig_output.exp()
+                kl_per_sample = p_orig * (orig_output - nystrom_output)
+                kl_div = kl_per_sample.mean()
+
+                wandb.log({
+                    "accuracy/nll": nll.item(),
+                    "accuracy/kl_div": kl_div.item(),
+                    "accuracy/nll_std": nll_per_sample.std().item(),
+                    "accuracy/kl_std": kl_per_sample.std().item(),
+                    "accuracy/kl_max": kl_per_sample.max().item(),
+                    "step": step
+                })
+            
+            # Calculate all metrics
+            speedup = orig_times["mean"] / nystrom_times["mean"]
+            theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
+            memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
+            efficiency = speedup / theoretical_speedup
+            
+            # Update summary metrics
+            self.summary_metrics["speedups"].append(speedup)
+            self.summary_metrics["memory_reductions"].append(memory_reduction)
+            self.summary_metrics["kl_divs"].append(kl_div.item())
+            self.summary_metrics["efficiencies"].append(efficiency)
+            
+            # Add row to results table
+            self.results_table.add_data(
+                n_input, n_sum, rank, batch_size, matrix_label,
+                orig_times["mean"] * 1000, nystrom_times["mean"] * 1000,
+                speedup, theoretical_speedup,
+                orig_memory, nystrom_memory, memory_reduction,
+                orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
+                nll.item(), kl_div.item(), efficiency
+            )
+            
+            # Log efficiency metrics
+            wandb.log({
+                "efficiency/actual_vs_theoretical": efficiency,
+                "efficiency/memory_reduction": memory_reduction,
+                "efficiency/speedup": speedup,
+                "step": step
+            })
+            return {
+                'n_input': n_input,
+                'n_sum': n_sum,
+                'rank': rank,
+                'batch_size': batch_size,
+                'speedup': speedup,
+                'memory_reduction': memory_reduction,
+                'nll': nll.item(),
+                'kl_div': kl_div.item(),
+                'efficiency': efficiency
+            }
 
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
