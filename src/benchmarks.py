@@ -10,6 +10,7 @@ from .config import BenchmarkConfig
 from nystromlayer import NystromSumLayer
 from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
 from .profilers import WandbMemoryProfiler, FLOPCounter
+from .visualisation import create_wandb_visualisations
 import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
@@ -32,6 +33,13 @@ class WandbCircuitBenchmark:
             notes=config.notes,
             config=asdict(config)
         )
+
+        # Log power-of-two configuration if enabled
+        if self.config.powers_of_two:
+            wandb.log({
+                "config/min_exp": self.config.min_exp,
+                "config/max_exp": self.config.max_exp,
+            }, step=0)
         
         # Create wandb table for detailed results
         self.results_table = wandb.Table(columns=[
@@ -39,14 +47,14 @@ class WandbCircuitBenchmark:
             "orig_time_ms", "nystrom_time_ms", "speedup", "theoretical_speedup",
             "orig_memory_mb", "nystrom_memory_mb", "memory_reduction",
             "orig_gflops", "nystrom_gflops", "flop_reduction",
-            "rel_error", "efficiency"
+            "nll", "kl_div", "efficiency"
         ])
         
         # Summary metrics
         self.summary_metrics = {
             "speedups": [],
             "memory_reductions": [],
-            "errors": [],
+            "kl_divs": [],
             "efficiencies": []
         }
     
@@ -89,49 +97,58 @@ class WandbCircuitBenchmark:
     
     
     def benchmark_single_configuration(
-        self, 
-        n_input: int, 
-        n_sum: int, 
-        rank: int, 
+        self,
+        n_input: int,
+        n_sum: int,
+        rank: int,
         batch_size: int,
         step: int
     ) -> Dict:
-        """Run benchmark for single configuration with wandb logging"""
+        """Run benchmark for single configuration with wandb logging.
+
+        The function now gracefully handles out-of-memory errors. When such an
+        error occurs, the configuration is logged to wandb and ``None`` is
+        returned so that downstream aggregation and plots are not corrupted.
+        """
         
         # Log current configuration
+        if self.config.powers_of_two and n_input == n_sum:
+            matrix_label = f"2^{int(np.log2(n_input**2))}"
+        else:
+            matrix_label = f"{n_input**2}x{n_sum**2}"
+
         wandb.log({
             "config/n_input": n_input,
             "config/n_sum": n_sum,
             "config/rank": rank,
             "config/batch_size": batch_size,
-            "config/matrix_dims": f"{n_input**2}x{n_sum**2}",
+            "config/matrix_dims": matrix_label,
             "step": step
         })
         
-        # Build circuits
-        original_circuit = build_and_compile_circuit(n_input, n_sum)
-        original_circuit = original_circuit.to(self.config.device).eval()
+        try:
+            # Build circuits
+            original_circuit = build_and_compile_circuit(n_input, n_sum)
+            original_circuit = original_circuit.to(self.config.device).eval()
 
-        
+            nystrom_circuit = copy.deepcopy(original_circuit)
+            replace_sum_layers(nystrom_circuit, rank=rank)
+            fix_address_book_modules(nystrom_circuit)
 
-        nystrom_circuit = copy.deepcopy(original_circuit)
-        replace_sum_layers(nystrom_circuit,rank=rank)
-        fix_address_book_modules(nystrom_circuit)
+            # Create test input
+            test_input = self.create_test_input(batch_size, n_input, self.config.device)
 
-        # Create test input
-        test_input = self.create_test_input(batch_size, n_input, self.config.device)
-      
-        # Time forward passes
-        orig_times = self.time_forward_pass(
-            original_circuit, test_input, 
-            self.config.num_warmup, self.config.num_trials
-        )
-        
-        nystrom_times = self.time_forward_pass(
-            nystrom_circuit, test_input,
-            self.config.num_warmup, self.config.num_trials
-        )
-        
+            # Time forward passes
+            orig_times = self.time_forward_pass(
+                original_circuit, test_input,
+                self.config.num_warmup, self.config.num_trials
+            )
+
+            nystrom_times = self.time_forward_pass(
+                nystrom_circuit, test_input,
+                self.config.num_warmup, self.config.num_trials
+            )
+
         # Log timing distributions
         wandb.log({
             "timing/original_mean_ms": orig_times["mean"] * 1000,
@@ -167,23 +184,29 @@ class WandbCircuitBenchmark:
             "step": step
         })
         
-        # Approximation error
+        # Approximation metrics
         with torch.no_grad():
             orig_output = original_circuit(test_input)
             nystrom_output = nystrom_circuit(test_input)
-            
-            abs_error = (orig_output - nystrom_output).norm()
-            rel_error = abs_error / orig_output.norm()
-            
-            # Log error distribution
-            error_per_sample = (orig_output - nystrom_output).norm(dim=-1) / orig_output.norm(dim=-1)
-            
+
+            # TODO: verify that these formulas for NLL and KL divergence are
+            # consistent with how the circuits represent probabilities. The
+            # current implementation assumes the circuit outputs log
+            # likelihoods for each sample.
+
+            nll_per_sample = -nystrom_output
+            nll = nll_per_sample.mean()
+
+            p_orig = orig_output.exp()
+            kl_per_sample = p_orig * (orig_output - nystrom_output)
+            kl_div = kl_per_sample.mean()
+
             wandb.log({
-                "accuracy/rel_error": rel_error.item(),
-                "accuracy/abs_error": abs_error.item(),
-                "accuracy/error_mean": error_per_sample.mean().item(),
-                "accuracy/error_std": error_per_sample.std().item(),
-                "accuracy/error_max": error_per_sample.max().item(),
+                "accuracy/nll": nll.item(),
+                "accuracy/kl_div": kl_div.item(),
+                "accuracy/nll_std": nll_per_sample.std().item(),
+                "accuracy/kl_std": kl_per_sample.std().item(),
+                "accuracy/kl_max": kl_per_sample.max().item(),
                 "step": step
             })
         
@@ -196,17 +219,17 @@ class WandbCircuitBenchmark:
         # Update summary metrics
         self.summary_metrics["speedups"].append(speedup)
         self.summary_metrics["memory_reductions"].append(memory_reduction)
-        self.summary_metrics["errors"].append(rel_error.item())
+        self.summary_metrics["kl_divs"].append(kl_div.item())
         self.summary_metrics["efficiencies"].append(efficiency)
         
         # Add row to results table
         self.results_table.add_data(
-            n_input, n_sum, rank, batch_size, f"{n_input**2}x{n_sum**2}",
+            n_input, n_sum, rank, batch_size, matrix_label,
             orig_times["mean"] * 1000, nystrom_times["mean"] * 1000,
             speedup, theoretical_speedup,
             orig_memory, nystrom_memory, memory_reduction,
             orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-            rel_error.item(), efficiency
+            nll.item(), kl_div.item(), efficiency
         )
         
         # Log efficiency metrics
@@ -216,7 +239,6 @@ class WandbCircuitBenchmark:
             "efficiency/speedup": speedup,
             "step": step
         })
-        
         return {
             'n_input': n_input,
             'n_sum': n_sum,
@@ -224,29 +246,57 @@ class WandbCircuitBenchmark:
             'batch_size': batch_size,
             'speedup': speedup,
             'memory_reduction': memory_reduction,
-            'rel_error': rel_error.item(),
+            'nll': nll.item(),
+            'kl_div': kl_div.item(),
             'efficiency': efficiency
         }
+
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                print(f"  OOM for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}")
+                wandb.log({
+                    "errors/type": "out_of_memory",
+                    "errors/message": str(e),
+                    "config/n_input": n_input,
+                    "config/n_sum": n_sum,
+                    "config/rank": rank,
+                    "config/batch_size": batch_size,
+                    "step": step
+                })
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None
+            else:
+                raise
     
     def run_full_benchmark(self):
         """Run complete benchmark suite with wandb tracking"""
         
         step = 0
-        total_configs = (
-            len(self.config.input_units) * 
-            len(self.config.sum_units) * 
-            len(self.config.ranks) * 
-            len(self.config.batch_sizes)
-        )
+        # Pre-compute the number of configurations that will actually be
+        # benchmarked. When ``powers_of_two`` is enabled we only test square
+        # matrices, so skip any non-square combinations in this count.
+        total_configs = 0
+        for n_input in self.config.input_units:
+            for n_sum in self.config.sum_units:
+                if self.config.powers_of_two and n_input != n_sum:
+                    continue
+                for rank in self.config.ranks:
+                    if rank >= min(n_input ** 2, n_sum ** 2):
+                        continue
+                    total_configs += len(self.config.batch_sizes)
         
         # Create progress bar in wandb
         progress = 0
         
         for n_input in self.config.input_units:
             for n_sum in self.config.sum_units:
+                # When powers-of-two mode is active, only benchmark square matrices
+                if self.config.powers_of_two and n_input != n_sum:
+                    continue
                 for rank in self.config.ranks:
                     # Skip if rank too large
-                    if rank >= min(n_input**2, n_sum**2):
+                    if rank >= min(n_input ** 2, n_sum ** 2):
                         continue
                     
                     for batch_size in self.config.batch_sizes:
@@ -261,7 +311,8 @@ class WandbCircuitBenchmark:
                             result = self.benchmark_single_configuration(
                                 n_input, n_sum, rank, batch_size, step
                             )
-                            step += 1
+                            if result is not None:
+                                step += 1
                             
                         except Exception as e:
                             print(f"  Failed: {e}")
@@ -275,7 +326,7 @@ class WandbCircuitBenchmark:
         wandb.log({"results_table": self.results_table})
         
         # Create and log visualizations
-        self.create_wandb_visualizations()
+        create_wandb_visualisations(self.results_table, self.config)
         
         return self.results_table
     
@@ -286,173 +337,19 @@ class WandbCircuitBenchmark:
             "summary/max_speedup": np.max(self.summary_metrics["speedups"]),
             "summary/min_speedup": np.min(self.summary_metrics["speedups"]),
             "summary/avg_memory_reduction": np.mean(self.summary_metrics["memory_reductions"]),
-            "summary/avg_error": np.mean(self.summary_metrics["errors"]),
+            "summary/avg_kl_div": np.mean(self.summary_metrics["kl_divs"]),
             "summary/avg_efficiency": np.mean(self.summary_metrics["efficiencies"]),
         }
         
         # Find best configurations
         speedups = np.array(self.summary_metrics["speedups"])
-        errors = np.array(self.summary_metrics["errors"])
+        errors = np.array(self.summary_metrics["kl_divs"])
         
-        # Best speedup with <1% error
+        # Best speedup with KL divergence < 1e-2
         good_accuracy_mask = errors < 0.01
         if good_accuracy_mask.any():
             best_speedup_good_accuracy = speedups[good_accuracy_mask].max()
-            summary["summary/best_speedup_1pct_error"] = best_speedup_good_accuracy
+            summary["summary/best_speedup_low_kl"] = best_speedup_good_accuracy
         
+
         wandb.log(summary)
-    
-    def create_wandb_visualizations(self):
-        """Create custom visualizations for wandb using raw data."""
-        import matplotlib.pyplot as plt
-        import numpy as np
-        
-        # Extract raw data from wandb table
-        if not self.results_table.data:
-            print("No data to visualize")
-            return
-        
-        # Get column indices
-        columns = self.results_table.columns
-        col_indices = {col: idx for idx, col in enumerate(columns)}
-        
-        # Extract data as numpy arrays for easier manipulation
-        data_array = np.array(self.results_table.data)
-        
-        # Extract specific columns
-        n_inputs = data_array[:, col_indices['n_input']].astype(int)
-        ranks = data_array[:, col_indices['rank']].astype(int)
-        speedups = data_array[:, col_indices['speedup']].astype(float)
-        rel_errors = data_array[:, col_indices['rel_error']].astype(float)
-        efficiencies = data_array[:, col_indices['efficiency']].astype(float)
-        matrix_sizes = data_array[:, col_indices['matrix_size']]
-        
-        # Get unique values
-        unique_n_inputs = sorted(set(n_inputs))
-        unique_ranks = sorted(set(ranks))
-        unique_matrix_sizes = sorted(set(matrix_sizes))
-        
-        # 1. Speedup vs Rank scatter plot
-        fig_speedup = plt.figure(figsize=(10, 6))
-        for n in unique_n_inputs:
-            # Filter data for this n_input
-            mask = n_inputs == n
-            n_ranks = ranks[mask]
-            n_speedups = speedups[mask]
-            
-            plt.scatter(n_ranks, n_speedups, label=f'n={n}', s=50, alpha=0.7)
-        
-        plt.xlabel('Rank')
-        plt.ylabel('Speedup Factor')
-        plt.title('Speedup vs Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/speedup_vs_rank": wandb.Image(fig_speedup)})
-        plt.close()
-        
-        # 2. Error vs Rank (log scale)
-        fig_error = plt.figure(figsize=(10, 6))
-        for n in unique_n_inputs:
-            # Filter data for this n_input
-            mask = n_inputs == n
-            n_ranks = ranks[mask]
-            n_errors = rel_errors[mask]
-            
-            # Sort by rank for line plot
-            sort_idx = np.argsort(n_ranks)
-            n_ranks_sorted = n_ranks[sort_idx]
-            n_errors_sorted = n_errors[sort_idx]
-            
-            plt.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', 
-                        label=f'n={n}', markersize=8)
-        
-        plt.xlabel('Rank')
-        plt.ylabel('Relative Error')
-        plt.title('Approximation Error vs Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/error_vs_rank": wandb.Image(fig_error)})
-        plt.close()
-        
-        # 3. Trade-off: Error vs Speedup with rank as color
-        fig_tradeoff = plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(
-            speedups, rel_errors, 
-            c=ranks, cmap='viridis', s=50, alpha=0.7
-        )
-        plt.xlabel('Speedup Factor')
-        plt.ylabel('Relative Error')
-        plt.yscale('log')
-        plt.title('Accuracy vs Performance Trade-off')
-        plt.colorbar(scatter, label='Rank')
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/tradeoff": wandb.Image(fig_tradeoff)})
-        plt.close()
-        
-        # 4. Efficiency heatmap (manual implementation without seaborn)
-        fig_efficiency = plt.figure(figsize=(12, 8))
-        
-        # Create efficiency matrix manually
-        efficiency_matrix = np.full((len(unique_ranks), len(unique_matrix_sizes)), np.nan)
-        
-        for i, rank in enumerate(unique_ranks):
-            for j, mat_size in enumerate(unique_matrix_sizes):
-                # Find matching entry
-                mask = (ranks == rank) & (matrix_sizes == mat_size)
-                if mask.any():
-                    efficiency_matrix[i, j] = efficiencies[mask][0]
-        
-        # Create heatmap manually
-        im = plt.imshow(efficiency_matrix, cmap='RdYlGn', aspect='auto')
-        plt.colorbar(im, label='Efficiency')
-        
-        # Set ticks and labels
-        plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-        plt.yticks(range(len(unique_ranks)), unique_ranks)
-        plt.xlabel('Matrix Size')
-        plt.ylabel('Rank')
-        
-        # Add text annotations
-        for i in range(len(unique_ranks)):
-            for j in range(len(unique_matrix_sizes)):
-                if not np.isnan(efficiency_matrix[i, j]):
-                    plt.text(j, i, f'{efficiency_matrix[i, j]:.2f}',
-                            ha='center', va='center')
-        
-        plt.title('Efficiency: Actual/Theoretical Speedup')
-        plt.tight_layout()
-        wandb.log({"charts/efficiency_heatmap": wandb.Image(fig_efficiency)})
-        plt.close()
-        
-        # 5. Additional useful plots
-        
-        # Memory reduction vs Matrix size
-        fig_memory = plt.figure(figsize=(10, 6))
-        memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
-        
-        for rank in unique_ranks:
-            mask = ranks == rank
-            sizes = matrix_sizes[mask]
-            mem_red = memory_reductions[mask]
-            
-            # Sort for plotting
-            unique_sizes_for_rank = sorted(set(sizes))
-            avg_mem_red = []
-            for size in unique_sizes_for_rank:
-                size_mask = (matrix_sizes == size) & (ranks == rank)
-                if size_mask.any():
-                    avg_mem_red.append(memory_reductions[size_mask].mean())
-            
-            if avg_mem_red:
-                plt.plot(range(len(unique_sizes_for_rank)), avg_mem_red, 
-                        'o-', label=f'rank={rank}', markersize=8)
-        
-        plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-        plt.xlabel('Matrix Size')
-        plt.ylabel('Memory Reduction')
-        plt.title('Memory Reduction by Matrix Size and Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        wandb.log({"charts/memory_reduction": wandb.Image(fig_memory)})
-        plt.close()
