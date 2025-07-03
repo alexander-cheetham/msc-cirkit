@@ -69,16 +69,38 @@ def plot_kl_nll_vs_rank(n_inputs, ranks, kl_divs, nlls, unique_n_inputs):
     plt.close()
 
 
-def plot_tradeoff(speedups, rel_errors, ranks, error_label):
-    """Plot accuracy vs performance trade-off."""
+def plot_tradeoff(speedups, errors, ranks, error_label, log_y=True):
+    """Plot accuracy vs performance trade-off for a single error metric."""
     fig = plt.figure(figsize=(10, 6))
-    scatter = plt.scatter(speedups, rel_errors, c=ranks, cmap='viridis', s=50, alpha=0.7)
+    scatter = plt.scatter(speedups, errors, c=ranks, cmap='viridis', s=50, alpha=0.7)
     plt.xlabel('Speedup Factor')
     plt.ylabel(error_label)
-    plt.yscale('log')
+    if log_y:
+        plt.yscale('log')
+    if error_label in ("KL Divergence", "Negative Log-Likelihood"):
+        plt.axhline(0, color='red', linestyle='--', linewidth=1)
     plt.title('Accuracy vs Performance Trade-off')
     plt.colorbar(scatter, label='Rank')
     plt.grid(True, alpha=0.3)
+    wandb.log({"charts/tradeoff": wandb.Image(fig)})
+    plt.close()
+
+
+def plot_tradeoff_kl_nll(speedups, kl_divs, nlls, ranks):
+    """Plot trade-off between speedup and KL/NLL in separate subplots."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    metrics = [(kl_divs, "KL Divergence"), (nlls, "Negative Log-Likelihood")]
+    scatters = []
+    for ax, (errors, label) in zip(axes, metrics):
+        sc = ax.scatter(speedups, errors, c=ranks, cmap='viridis', s=50, alpha=0.7)
+        scatters.append(sc)
+        ax.set_xlabel('Speedup Factor')
+        ax.set_ylabel(label)
+        ax.axhline(0, color='red', linestyle='--', linewidth=1)
+        ax.set_title(f'Accuracy vs Performance: {label}')
+        ax.grid(True, alpha=0.3)
+    fig.colorbar(scatters[0], ax=axes.ravel().tolist(), label='Rank')
+    fig.tight_layout()
     wandb.log({"charts/tradeoff": wandb.Image(fig)})
     plt.close()
 
@@ -172,28 +194,19 @@ def create_wandb_visualisations(results_table, config) -> None:
 
     plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs)
 
-    tradeoff_errors = None
-    tradeoff_label = 'Error'
-
     if kl_divs is not None and nlls is not None:
         plot_kl_nll_vs_rank(n_inputs, ranks, kl_divs, nlls, unique_n_inputs)
-        tradeoff_errors = kl_divs
-        tradeoff_label = 'KL Divergence'
+        plot_tradeoff_kl_nll(speedups, kl_divs, nlls, ranks)
     elif rel_errors is not None:
         plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, 'Relative Error')
-        tradeoff_errors = rel_errors
-        tradeoff_label = 'Relative Error'
+        plot_tradeoff(speedups, rel_errors, ranks, 'Relative Error', log_y=True)
     elif kl_divs is not None:
         plot_error_vs_rank(n_inputs, ranks, kl_divs, unique_n_inputs, 'KL Divergence')
-        tradeoff_errors = kl_divs
-        tradeoff_label = 'KL Divergence'
+        plot_tradeoff(speedups, kl_divs, ranks, 'KL Divergence', log_y=False)
     elif nlls is not None:
         plot_error_vs_rank(n_inputs, ranks, nlls, unique_n_inputs, 'Negative Log-Likelihood')
-        tradeoff_errors = nlls
-        tradeoff_label = 'Negative Log-Likelihood'
+        plot_tradeoff(speedups, nlls, ranks, 'Negative Log-Likelihood', log_y=False)
 
-    if tradeoff_errors is not None:
-        plot_tradeoff(speedups, tradeoff_errors, ranks, tradeoff_label)
     plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes)
     plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=config.powers_of_two)
 
