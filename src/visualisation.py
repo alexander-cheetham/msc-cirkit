@@ -43,6 +43,32 @@ def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label
     plt.close()
 
 
+def plot_kl_nll_vs_rank(n_inputs, ranks, kl_divs, nlls, unique_n_inputs):
+    """Plot KL divergence and NLL against rank in separate subplots."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+    metrics = [(kl_divs, "KL Divergence"), (nlls, "Negative Log-Likelihood")]
+    for ax, (errors, label) in zip(axes, metrics):
+        for n in unique_n_inputs:
+            mask = n_inputs == n
+            n_ranks = ranks[mask]
+            n_errors = errors[mask]
+            sort_idx = np.argsort(n_ranks)
+            n_ranks_sorted = n_ranks[sort_idx]
+            n_errors_sorted = n_errors[sort_idx]
+            ax.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', label=f'n={n}', markersize=8)
+        ax.set_xlabel('Rank')
+        ax.set_ylabel(label)
+        ax.set_title(label)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle('Approximation Error vs Rank')
+    fig.tight_layout()
+    wandb.log({"charts/error_vs_rank": wandb.Image(fig)})
+    plt.close()
+
+
 def plot_tradeoff(speedups, rel_errors, ranks, error_label):
     """Plot accuracy vs performance trade-off."""
     fig = plt.figure(figsize=(10, 6))
@@ -125,15 +151,11 @@ def create_wandb_visualisations(results_table, config) -> None:
     n_inputs = data_array[:, col_indices['n_input']].astype(int)
     ranks = data_array[:, col_indices['rank']].astype(int)
     speedups = data_array[:, col_indices['speedup']].astype(float)
-    if 'rel_error' in col_indices:
-        rel_errors = data_array[:, col_indices['rel_error']].astype(float)
-        error_label = 'Relative Error'
-    elif 'kl_div' in col_indices:
-        rel_errors = data_array[:, col_indices['kl_div']].astype(float)
-        error_label = 'KL Divergence'
-    else:
-        rel_errors = None
-        error_label = 'Error'
+
+    kl_divs = data_array[:, col_indices['kl_div']].astype(float) if 'kl_div' in col_indices else None
+    nlls = data_array[:, col_indices['nll']].astype(float) if 'nll' in col_indices else None
+    rel_errors = data_array[:, col_indices['rel_error']].astype(float) if 'rel_error' in col_indices else None
+
     efficiencies = data_array[:, col_indices['efficiency']].astype(float)
     matrix_sizes = data_array[:, col_indices['matrix_size']]
     memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
@@ -149,9 +171,29 @@ def create_wandb_visualisations(results_table, config) -> None:
         unique_matrix_sizes = sorted(set(matrix_sizes))
 
     plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs)
-    if rel_errors is not None:
-        plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label)
-        plot_tradeoff(speedups, rel_errors, ranks, error_label)
+
+    tradeoff_errors = None
+    tradeoff_label = 'Error'
+
+    if kl_divs is not None and nlls is not None:
+        plot_kl_nll_vs_rank(n_inputs, ranks, kl_divs, nlls, unique_n_inputs)
+        tradeoff_errors = kl_divs
+        tradeoff_label = 'KL Divergence'
+    elif rel_errors is not None:
+        plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, 'Relative Error')
+        tradeoff_errors = rel_errors
+        tradeoff_label = 'Relative Error'
+    elif kl_divs is not None:
+        plot_error_vs_rank(n_inputs, ranks, kl_divs, unique_n_inputs, 'KL Divergence')
+        tradeoff_errors = kl_divs
+        tradeoff_label = 'KL Divergence'
+    elif nlls is not None:
+        plot_error_vs_rank(n_inputs, ranks, nlls, unique_n_inputs, 'Negative Log-Likelihood')
+        tradeoff_errors = nlls
+        tradeoff_label = 'Negative Log-Likelihood'
+
+    if tradeoff_errors is not None:
+        plot_tradeoff(speedups, tradeoff_errors, ranks, tradeoff_label)
     plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes)
     plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=config.powers_of_two)
 
