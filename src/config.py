@@ -25,3 +25,8 @@ class BenchmarkConfig:
     experiment_name: str = "benchmark"
     tags: List[str] = field(default_factory=lambda: ["benchmark", "nystrom", "kronecker"])
     notes: str = "Comparing Kronecker product vs Nyström approximation in squared circuits"
+
+    # Optional power-of-two configuration
+    powers_of_two: bool = False
+    min_exp: Optional[int] = None
+    max_exp: Optional[int] = None
