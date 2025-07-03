@@ -8,6 +8,7 @@ dependencies = [
     "pygraphviz",
     "wandb>=0.17",
     "jupyter>=1.1.1",
+    "cirkit",  # real CirKit library
     "libcirkit>=0.2.1",
     "matplotlib>=3.10.1",
     "torch>=2.6.0",
