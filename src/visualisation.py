@@ -22,6 +22,7 @@ def plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs):
     plt.close()
 
 
+
 def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label):
     """Plot approximation error against rank."""
     fig = plt.figure(figsize=(10, 6))
