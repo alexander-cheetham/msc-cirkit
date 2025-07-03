@@ -1,79 +1,13 @@
 """Visualization functions for benchmark results."""
 
 import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 import numpy as np
-from typing import Dict
-
-def plot_benchmark_results(df: pd.DataFrame, save_path: str = None):
-    """Create comprehensive visualization of benchmark results."""
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('Kronecker vs Nyström: Benchmark Results', fontsize=16)
-    
-    # Implementation from previous code
-    # ... (all the plotting code)
-    
-    if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    return fig
-
-def create_summary_report(df: pd.DataFrame) -> Dict:
-    """Generate summary statistics from benchmark results."""
-    summary = {
-        "avg_speedup": df['actual_speedup'].mean(),
-        "max_speedup": df['actual_speedup'].max(),
-        "avg_memory_reduction": df['memory_reduction'].mean(),
-        "avg_error": df['rel_error'].mean(),
-    }
-    
-    # Find optimal configurations
-    good_accuracy = df[df['rel_error'] < 0.01]
-    if len(good_accuracy) > 0:
-        best = good_accuracy.loc[good_accuracy['actual_speedup'].idxmax()]
-        summary['best_config'] = {
-            'n_input': best['n_input'],
-            'n_sum': best['n_sum'],
-            'rank': best['rank'],
-            'speedup': best['actual_speedup']
-        }
-    
-    return summary
+import wandb
 
 
-def create_wandb_visualisations(results_table, config) -> None:
-    """Create custom visualisations for wandb using raw data."""
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import wandb
-
-    if not results_table.data:
-        print("No data to visualize")
-        return
-
-    columns = results_table.columns
-    col_indices = {col: idx for idx, col in enumerate(columns)}
-
-    data_array = np.array(results_table.data)
-
-    n_inputs = data_array[:, col_indices['n_input']].astype(int)
-    ranks = data_array[:, col_indices['rank']].astype(int)
-    speedups = data_array[:, col_indices['speedup']].astype(float)
-    rel_errors = data_array[:, col_indices['rel_error']].astype(float)
-    efficiencies = data_array[:, col_indices['efficiency']].astype(float)
-    matrix_sizes = data_array[:, col_indices['matrix_size']]
-
-    unique_n_inputs = sorted(set(n_inputs))
-    unique_ranks = sorted(set(ranks))
-    if config.powers_of_two:
-        matrix_exps = [int(str(m).split('^')[1]) for m in matrix_sizes]
-        unique_matrix_exps = sorted(set(matrix_exps))
-        unique_matrix_sizes = [f"2^{e}" for e in unique_matrix_exps]
-    else:
-        unique_matrix_sizes = sorted(set(matrix_sizes))
-
-    fig_speedup = plt.figure(figsize=(10, 6))
+def plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs):
+    """Plot speedup against rank for each input size."""
+    fig = plt.figure(figsize=(10, 6))
     for n in unique_n_inputs:
         mask = n_inputs == n
         n_ranks = ranks[mask]
@@ -84,10 +18,13 @@ def create_wandb_visualisations(results_table, config) -> None:
     plt.title('Speedup vs Rank')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    wandb.log({"charts/speedup_vs_rank": wandb.Image(fig_speedup)})
+    wandb.log({"charts/speedup_vs_rank": wandb.Image(fig)})
     plt.close()
 
-    fig_error = plt.figure(figsize=(10, 6))
+
+def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs):
+    """Plot approximation error against rank."""
+    fig = plt.figure(figsize=(10, 6))
     for n in unique_n_inputs:
         mask = n_inputs == n
         n_ranks = ranks[mask]
@@ -101,10 +38,13 @@ def create_wandb_visualisations(results_table, config) -> None:
     plt.title('Approximation Error vs Rank')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    wandb.log({"charts/error_vs_rank": wandb.Image(fig_error)})
+    wandb.log({"charts/error_vs_rank": wandb.Image(fig)})
     plt.close()
 
-    fig_tradeoff = plt.figure(figsize=(10, 6))
+
+def plot_tradeoff(speedups, rel_errors, ranks):
+    """Plot accuracy vs performance trade-off."""
+    fig = plt.figure(figsize=(10, 6))
     scatter = plt.scatter(speedups, rel_errors, c=ranks, cmap='viridis', s=50, alpha=0.7)
     plt.xlabel('Speedup Factor')
     plt.ylabel('Relative Error')
@@ -112,10 +52,13 @@ def create_wandb_visualisations(results_table, config) -> None:
     plt.title('Accuracy vs Performance Trade-off')
     plt.colorbar(scatter, label='Rank')
     plt.grid(True, alpha=0.3)
-    wandb.log({"charts/tradeoff": wandb.Image(fig_tradeoff)})
+    wandb.log({"charts/tradeoff": wandb.Image(fig)})
     plt.close()
 
-    fig_efficiency = plt.figure(figsize=(12, 8))
+
+def plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes):
+    """Plot heatmap of efficiency values."""
+    fig = plt.figure(figsize=(12, 8))
     efficiency_matrix = np.full((len(unique_ranks), len(unique_matrix_sizes)), np.nan)
     for i, rank in enumerate(unique_ranks):
         for j, mat_size in enumerate(unique_matrix_sizes):
@@ -134,16 +77,17 @@ def create_wandb_visualisations(results_table, config) -> None:
                 plt.text(j, i, f'{efficiency_matrix[i, j]:.2f}', ha='center', va='center')
     plt.title('Efficiency: Actual/Theoretical Speedup')
     plt.tight_layout()
-    wandb.log({"charts/efficiency_heatmap": wandb.Image(fig_efficiency)})
+    wandb.log({"charts/efficiency_heatmap": wandb.Image(fig)})
     plt.close()
 
-    fig_memory = plt.figure(figsize=(10, 6))
-    memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
+
+def plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=False):
+    """Plot memory reduction for each matrix size and rank."""
+    fig = plt.figure(figsize=(10, 6))
     for rank in unique_ranks:
         mask = ranks == rank
         sizes = matrix_sizes[mask]
-        mem_red = memory_reductions[mask]
-        if config.powers_of_two:
+        if powers_of_two:
             unique_sizes_for_rank = sorted(set(sizes), key=lambda s: int(str(s).split('^')[1]))
         else:
             unique_sizes_for_rank = sorted(set(sizes))
@@ -161,5 +105,43 @@ def create_wandb_visualisations(results_table, config) -> None:
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    wandb.log({"charts/memory_reduction": wandb.Image(fig_memory)})
+    wandb.log({"charts/memory_reduction": wandb.Image(fig)})
     plt.close()
+
+
+def create_wandb_visualisations(results_table, config) -> None:
+    """Create and log wandb visualisations from a results table."""
+
+    if not results_table.data:
+        print("No data to visualize")
+        return
+
+    columns = results_table.columns
+    col_indices = {col: idx for idx, col in enumerate(columns)}
+
+    data_array = np.array(results_table.data)
+
+    n_inputs = data_array[:, col_indices['n_input']].astype(int)
+    ranks = data_array[:, col_indices['rank']].astype(int)
+    speedups = data_array[:, col_indices['speedup']].astype(float)
+    rel_errors = data_array[:, col_indices['rel_error']].astype(float)
+    efficiencies = data_array[:, col_indices['efficiency']].astype(float)
+    matrix_sizes = data_array[:, col_indices['matrix_size']]
+    memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
+
+    unique_n_inputs = sorted(set(n_inputs))
+    unique_ranks = sorted(set(ranks))
+
+    if config.powers_of_two:
+        matrix_exps = [int(str(m).split('^')[1]) for m in matrix_sizes]
+        unique_matrix_exps = sorted(set(matrix_exps))
+        unique_matrix_sizes = [f"2^{e}" for e in unique_matrix_exps]
+    else:
+        unique_matrix_sizes = sorted(set(matrix_sizes))
+
+    plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs)
+    plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs)
+    plot_tradeoff(speedups, rel_errors, ranks)
+    plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes)
+    plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=config.powers_of_two)
+
