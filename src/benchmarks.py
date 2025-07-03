@@ -97,14 +97,19 @@ class WandbCircuitBenchmark:
     
     
     def benchmark_single_configuration(
-        self, 
-        n_input: int, 
-        n_sum: int, 
-        rank: int, 
+        self,
+        n_input: int,
+        n_sum: int,
+        rank: int,
         batch_size: int,
         step: int
     ) -> Dict:
-        """Run benchmark for single configuration with wandb logging"""
+        """Run benchmark for single configuration with wandb logging.
+
+        The function now gracefully handles out-of-memory errors. When such an
+        error occurs, the configuration is logged to wandb and ``None`` is
+        returned so that downstream aggregation and plots are not corrupted.
+        """
         
         # Log current configuration
         if self.config.powers_of_two and n_input == n_sum:
@@ -121,30 +126,29 @@ class WandbCircuitBenchmark:
             "step": step
         })
         
-        # Build circuits
-        original_circuit = build_and_compile_circuit(n_input, n_sum)
-        original_circuit = original_circuit.to(self.config.device).eval()
+        try:
+            # Build circuits
+            original_circuit = build_and_compile_circuit(n_input, n_sum)
+            original_circuit = original_circuit.to(self.config.device).eval()
 
-        
+            nystrom_circuit = copy.deepcopy(original_circuit)
+            replace_sum_layers(nystrom_circuit, rank=rank)
+            fix_address_book_modules(nystrom_circuit)
 
-        nystrom_circuit = copy.deepcopy(original_circuit)
-        replace_sum_layers(nystrom_circuit,rank=rank)
-        fix_address_book_modules(nystrom_circuit)
+            # Create test input
+            test_input = self.create_test_input(batch_size, n_input, self.config.device)
 
-        # Create test input
-        test_input = self.create_test_input(batch_size, n_input, self.config.device)
-      
-        # Time forward passes
-        orig_times = self.time_forward_pass(
-            original_circuit, test_input, 
-            self.config.num_warmup, self.config.num_trials
-        )
-        
-        nystrom_times = self.time_forward_pass(
-            nystrom_circuit, test_input,
-            self.config.num_warmup, self.config.num_trials
-        )
-        
+            # Time forward passes
+            orig_times = self.time_forward_pass(
+                original_circuit, test_input,
+                self.config.num_warmup, self.config.num_trials
+            )
+
+            nystrom_times = self.time_forward_pass(
+                nystrom_circuit, test_input,
+                self.config.num_warmup, self.config.num_trials
+            )
+
         # Log timing distributions
         wandb.log({
             "timing/original_mean_ms": orig_times["mean"] * 1000,
@@ -235,7 +239,6 @@ class WandbCircuitBenchmark:
             "efficiency/speedup": speedup,
             "step": step
         })
-        
         return {
             'n_input': n_input,
             'n_sum': n_sum,
@@ -247,6 +250,24 @@ class WandbCircuitBenchmark:
             'kl_div': kl_div.item(),
             'efficiency': efficiency
         }
+
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                print(f"  OOM for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}")
+                wandb.log({
+                    "errors/type": "out_of_memory",
+                    "errors/message": str(e),
+                    "config/n_input": n_input,
+                    "config/n_sum": n_sum,
+                    "config/rank": rank,
+                    "config/batch_size": batch_size,
+                    "step": step
+                })
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None
+            else:
+                raise
     
     def run_full_benchmark(self):
         """Run complete benchmark suite with wandb tracking"""
@@ -290,7 +311,8 @@ class WandbCircuitBenchmark:
                             result = self.benchmark_single_configuration(
                                 n_input, n_sum, rank, batch_size, step
                             )
-                            step += 1
+                            if result is not None:
+                                step += 1
                             
                         except Exception as e:
                             print(f"  Failed: {e}")
