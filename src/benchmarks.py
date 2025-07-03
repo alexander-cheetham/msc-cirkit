@@ -10,6 +10,7 @@ from .config import BenchmarkConfig
 from nystromlayer import NystromSumLayer
 from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
 from .profilers import WandbMemoryProfiler, FLOPCounter
+from .visualisation import create_wandb_visualisations
 import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
@@ -32,6 +33,13 @@ class WandbCircuitBenchmark:
             notes=config.notes,
             config=asdict(config)
         )
+
+        # Log power-of-two configuration if enabled
+        if self.config.powers_of_two:
+            wandb.log({
+                "config/min_exp": self.config.min_exp,
+                "config/max_exp": self.config.max_exp,
+            }, step=0)
         
         # Create wandb table for detailed results
         self.results_table = wandb.Table(columns=[
@@ -99,12 +107,17 @@ class WandbCircuitBenchmark:
         """Run benchmark for single configuration with wandb logging"""
         
         # Log current configuration
+        if self.config.powers_of_two and n_input == n_sum:
+            matrix_label = f"2^{int(np.log2(n_input**2))}"
+        else:
+            matrix_label = f"{n_input**2}x{n_sum**2}"
+
         wandb.log({
             "config/n_input": n_input,
             "config/n_sum": n_sum,
             "config/rank": rank,
             "config/batch_size": batch_size,
-            "config/matrix_dims": f"{n_input**2}x{n_sum**2}",
+            "config/matrix_dims": matrix_label,
             "step": step
         })
         
@@ -201,7 +214,7 @@ class WandbCircuitBenchmark:
         
         # Add row to results table
         self.results_table.add_data(
-            n_input, n_sum, rank, batch_size, f"{n_input**2}x{n_sum**2}",
+            n_input, n_sum, rank, batch_size, matrix_label,
             orig_times["mean"] * 1000, nystrom_times["mean"] * 1000,
             speedup, theoretical_speedup,
             orig_memory, nystrom_memory, memory_reduction,
@@ -275,7 +288,7 @@ class WandbCircuitBenchmark:
         wandb.log({"results_table": self.results_table})
         
         # Create and log visualizations
-        self.create_wandb_visualizations()
+        create_wandb_visualisations(self.results_table, self.config)
         
         return self.results_table
     
@@ -302,157 +315,3 @@ class WandbCircuitBenchmark:
         
         wandb.log(summary)
     
-    def create_wandb_visualizations(self):
-        """Create custom visualizations for wandb using raw data."""
-        import matplotlib.pyplot as plt
-        import numpy as np
-        
-        # Extract raw data from wandb table
-        if not self.results_table.data:
-            print("No data to visualize")
-            return
-        
-        # Get column indices
-        columns = self.results_table.columns
-        col_indices = {col: idx for idx, col in enumerate(columns)}
-        
-        # Extract data as numpy arrays for easier manipulation
-        data_array = np.array(self.results_table.data)
-        
-        # Extract specific columns
-        n_inputs = data_array[:, col_indices['n_input']].astype(int)
-        ranks = data_array[:, col_indices['rank']].astype(int)
-        speedups = data_array[:, col_indices['speedup']].astype(float)
-        rel_errors = data_array[:, col_indices['rel_error']].astype(float)
-        efficiencies = data_array[:, col_indices['efficiency']].astype(float)
-        matrix_sizes = data_array[:, col_indices['matrix_size']]
-        
-        # Get unique values
-        unique_n_inputs = sorted(set(n_inputs))
-        unique_ranks = sorted(set(ranks))
-        unique_matrix_sizes = sorted(set(matrix_sizes))
-        
-        # 1. Speedup vs Rank scatter plot
-        fig_speedup = plt.figure(figsize=(10, 6))
-        for n in unique_n_inputs:
-            # Filter data for this n_input
-            mask = n_inputs == n
-            n_ranks = ranks[mask]
-            n_speedups = speedups[mask]
-            
-            plt.scatter(n_ranks, n_speedups, label=f'n={n}', s=50, alpha=0.7)
-        
-        plt.xlabel('Rank')
-        plt.ylabel('Speedup Factor')
-        plt.title('Speedup vs Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/speedup_vs_rank": wandb.Image(fig_speedup)})
-        plt.close()
-        
-        # 2. Error vs Rank (log scale)
-        fig_error = plt.figure(figsize=(10, 6))
-        for n in unique_n_inputs:
-            # Filter data for this n_input
-            mask = n_inputs == n
-            n_ranks = ranks[mask]
-            n_errors = rel_errors[mask]
-            
-            # Sort by rank for line plot
-            sort_idx = np.argsort(n_ranks)
-            n_ranks_sorted = n_ranks[sort_idx]
-            n_errors_sorted = n_errors[sort_idx]
-            
-            plt.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', 
-                        label=f'n={n}', markersize=8)
-        
-        plt.xlabel('Rank')
-        plt.ylabel('Relative Error')
-        plt.title('Approximation Error vs Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/error_vs_rank": wandb.Image(fig_error)})
-        plt.close()
-        
-        # 3. Trade-off: Error vs Speedup with rank as color
-        fig_tradeoff = plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(
-            speedups, rel_errors, 
-            c=ranks, cmap='viridis', s=50, alpha=0.7
-        )
-        plt.xlabel('Speedup Factor')
-        plt.ylabel('Relative Error')
-        plt.yscale('log')
-        plt.title('Accuracy vs Performance Trade-off')
-        plt.colorbar(scatter, label='Rank')
-        plt.grid(True, alpha=0.3)
-        wandb.log({"charts/tradeoff": wandb.Image(fig_tradeoff)})
-        plt.close()
-        
-        # 4. Efficiency heatmap (manual implementation without seaborn)
-        fig_efficiency = plt.figure(figsize=(12, 8))
-        
-        # Create efficiency matrix manually
-        efficiency_matrix = np.full((len(unique_ranks), len(unique_matrix_sizes)), np.nan)
-        
-        for i, rank in enumerate(unique_ranks):
-            for j, mat_size in enumerate(unique_matrix_sizes):
-                # Find matching entry
-                mask = (ranks == rank) & (matrix_sizes == mat_size)
-                if mask.any():
-                    efficiency_matrix[i, j] = efficiencies[mask][0]
-        
-        # Create heatmap manually
-        im = plt.imshow(efficiency_matrix, cmap='RdYlGn', aspect='auto')
-        plt.colorbar(im, label='Efficiency')
-        
-        # Set ticks and labels
-        plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-        plt.yticks(range(len(unique_ranks)), unique_ranks)
-        plt.xlabel('Matrix Size')
-        plt.ylabel('Rank')
-        
-        # Add text annotations
-        for i in range(len(unique_ranks)):
-            for j in range(len(unique_matrix_sizes)):
-                if not np.isnan(efficiency_matrix[i, j]):
-                    plt.text(j, i, f'{efficiency_matrix[i, j]:.2f}',
-                            ha='center', va='center')
-        
-        plt.title('Efficiency: Actual/Theoretical Speedup')
-        plt.tight_layout()
-        wandb.log({"charts/efficiency_heatmap": wandb.Image(fig_efficiency)})
-        plt.close()
-        
-        # 5. Additional useful plots
-        
-        # Memory reduction vs Matrix size
-        fig_memory = plt.figure(figsize=(10, 6))
-        memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
-        
-        for rank in unique_ranks:
-            mask = ranks == rank
-            sizes = matrix_sizes[mask]
-            mem_red = memory_reductions[mask]
-            
-            # Sort for plotting
-            unique_sizes_for_rank = sorted(set(sizes))
-            avg_mem_red = []
-            for size in unique_sizes_for_rank:
-                size_mask = (matrix_sizes == size) & (ranks == rank)
-                if size_mask.any():
-                    avg_mem_red.append(memory_reductions[size_mask].mean())
-            
-            if avg_mem_red:
-                plt.plot(range(len(unique_sizes_for_rank)), avg_mem_red, 
-                        'o-', label=f'rank={rank}', markersize=8)
-        
-        plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-        plt.xlabel('Matrix Size')
-        plt.ylabel('Memory Reduction')
-        plt.title('Memory Reduction by Matrix Size and Rank')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        wandb.log({"charts/memory_reduction": wandb.Image(fig_memory)})
-        plt.close()

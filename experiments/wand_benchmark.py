@@ -2,14 +2,37 @@
 
 import sys
 import os
+import argparse
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import wandb
 from src.config import BenchmarkConfig
-from src.benchmarks import WandbCircuitBenchmark  # You'll need to add this to benchmarks.py
+from src.benchmarks import WandbCircuitBenchmark
 
 def main():
     """Run benchmark with wandb tracking."""
+
+    parser = argparse.ArgumentParser(description="Run wandb benchmark")
+    parser.add_argument(
+        "--powers-of-two",
+        action="store_true",
+        help="Use powers of two for number of units and keep input_units=sum_units",
+    )
+    parser.add_argument(
+        "--min-exp",
+        type=int,
+        default=5,
+        help="Minimum exponent for powers of two (2**min_exp)",
+    )
+    parser.add_argument(
+        "--max-exp",
+        type=int,
+        default=9,
+        help="Maximum exponent for powers of two (2**max_exp)",
+    )
+
+    args = parser.parse_args()
     
     # config = BenchmarkConfig(
     #     input_units=[10, 20, 30, 40],
@@ -36,14 +59,31 @@ def main():
     #     project_name="kronecker-vs-nystrom",
     #     experiment_name="full_benchmark_very_large"
     # )
-    config = BenchmarkConfig(
-        input_units=[50, 70, 100, 120,200],        # Creates: 2500, 4900, 10000, 14400
-        sum_units=[50, 70, 100, 120,200],
-        ranks=[50, 100, 200, 400, 600, 2000,5000, 10000,20000],        # Higher ranks for larger matrices
-        batch_sizes=[256, 512],          # Larger batches
-        project_name="kronecker-vs-nystrom",
-        experiment_name="full_benchmark_very_large_more_ranks"
-    )
+    if args.powers_of_two:
+        units = [2 ** i for i in range(args.min_exp, args.max_exp + 1)]
+        config = BenchmarkConfig(
+            input_units=units,
+            sum_units=units,
+            ranks=[50, 100, 200, 400, 600, 2000, 5000, 10000, 20000],
+            batch_sizes=[256, 512],
+            project_name="kronecker-vs-nystrom",
+            experiment_name="full_benchmark_pow2",
+            powers_of_two=True,
+            min_exp=args.min_exp,
+            max_exp=args.max_exp,
+        )
+    else:
+        config = BenchmarkConfig(
+            input_units=[50, 70, 100, 120, 200],
+            sum_units=[50, 70, 100, 120, 200],
+            ranks=[50, 100, 200, 400, 600, 2000, 5000, 10000, 20000],
+            batch_sizes=[256, 512],
+            project_name="kronecker-vs-nystrom",
+            experiment_name="full_benchmark_very_large_more_ranks",
+            powers_of_two=False,
+            min_exp=None,
+            max_exp=None,
+        )
     
     print(f"Starting wandb experiment on {config.device}")
     benchmark = WandbCircuitBenchmark(config)
