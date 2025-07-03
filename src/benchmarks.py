@@ -245,21 +245,30 @@ class WandbCircuitBenchmark:
         """Run complete benchmark suite with wandb tracking"""
         
         step = 0
-        total_configs = (
-            len(self.config.input_units) * 
-            len(self.config.sum_units) * 
-            len(self.config.ranks) * 
-            len(self.config.batch_sizes)
-        )
+        # Pre-compute the number of configurations that will actually be
+        # benchmarked. When ``powers_of_two`` is enabled we only test square
+        # matrices, so skip any non-square combinations in this count.
+        total_configs = 0
+        for n_input in self.config.input_units:
+            for n_sum in self.config.sum_units:
+                if self.config.powers_of_two and n_input != n_sum:
+                    continue
+                for rank in self.config.ranks:
+                    if rank >= min(n_input ** 2, n_sum ** 2):
+                        continue
+                    total_configs += len(self.config.batch_sizes)
         
         # Create progress bar in wandb
         progress = 0
         
         for n_input in self.config.input_units:
             for n_sum in self.config.sum_units:
+                # When powers-of-two mode is active, only benchmark square matrices
+                if self.config.powers_of_two and n_input != n_sum:
+                    continue
                 for rank in self.config.ranks:
                     # Skip if rank too large
-                    if rank >= min(n_input**2, n_sum**2):
+                    if rank >= min(n_input ** 2, n_sum ** 2):
                         continue
                     
                     for batch_size in self.config.batch_sizes:
