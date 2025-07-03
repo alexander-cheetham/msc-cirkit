@@ -39,14 +39,14 @@ class WandbCircuitBenchmark:
             "orig_time_ms", "nystrom_time_ms", "speedup", "theoretical_speedup",
             "orig_memory_mb", "nystrom_memory_mb", "memory_reduction",
             "orig_gflops", "nystrom_gflops", "flop_reduction",
-            "rel_error", "efficiency"
+            "nll", "kl_div", "efficiency"
         ])
         
         # Summary metrics
         self.summary_metrics = {
             "speedups": [],
             "memory_reductions": [],
-            "errors": [],
+            "kl_divs": [],
             "efficiencies": []
         }
     
@@ -167,23 +167,29 @@ class WandbCircuitBenchmark:
             "step": step
         })
         
-        # Approximation error
+        # Approximation metrics
         with torch.no_grad():
             orig_output = original_circuit(test_input)
             nystrom_output = nystrom_circuit(test_input)
-            
-            abs_error = (orig_output - nystrom_output).norm()
-            rel_error = abs_error / orig_output.norm()
-            
-            # Log error distribution
-            error_per_sample = (orig_output - nystrom_output).norm(dim=-1) / orig_output.norm(dim=-1)
-            
+
+            # TODO: verify that these formulas for NLL and KL divergence are
+            # consistent with how the circuits represent probabilities. The
+            # current implementation assumes the circuit outputs log
+            # likelihoods for each sample.
+
+            nll_per_sample = -nystrom_output
+            nll = nll_per_sample.mean()
+
+            p_orig = orig_output.exp()
+            kl_per_sample = p_orig * (orig_output - nystrom_output)
+            kl_div = kl_per_sample.mean()
+
             wandb.log({
-                "accuracy/rel_error": rel_error.item(),
-                "accuracy/abs_error": abs_error.item(),
-                "accuracy/error_mean": error_per_sample.mean().item(),
-                "accuracy/error_std": error_per_sample.std().item(),
-                "accuracy/error_max": error_per_sample.max().item(),
+                "accuracy/nll": nll.item(),
+                "accuracy/kl_div": kl_div.item(),
+                "accuracy/nll_std": nll_per_sample.std().item(),
+                "accuracy/kl_std": kl_per_sample.std().item(),
+                "accuracy/kl_max": kl_per_sample.max().item(),
                 "step": step
             })
         
@@ -196,7 +202,7 @@ class WandbCircuitBenchmark:
         # Update summary metrics
         self.summary_metrics["speedups"].append(speedup)
         self.summary_metrics["memory_reductions"].append(memory_reduction)
-        self.summary_metrics["errors"].append(rel_error.item())
+        self.summary_metrics["kl_divs"].append(kl_div.item())
         self.summary_metrics["efficiencies"].append(efficiency)
         
         # Add row to results table
@@ -206,7 +212,7 @@ class WandbCircuitBenchmark:
             speedup, theoretical_speedup,
             orig_memory, nystrom_memory, memory_reduction,
             orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-            rel_error.item(), efficiency
+            nll.item(), kl_div.item(), efficiency
         )
         
         # Log efficiency metrics
@@ -224,7 +230,8 @@ class WandbCircuitBenchmark:
             'batch_size': batch_size,
             'speedup': speedup,
             'memory_reduction': memory_reduction,
-            'rel_error': rel_error.item(),
+            'nll': nll.item(),
+            'kl_div': kl_div.item(),
             'efficiency': efficiency
         }
     
@@ -286,19 +293,19 @@ class WandbCircuitBenchmark:
             "summary/max_speedup": np.max(self.summary_metrics["speedups"]),
             "summary/min_speedup": np.min(self.summary_metrics["speedups"]),
             "summary/avg_memory_reduction": np.mean(self.summary_metrics["memory_reductions"]),
-            "summary/avg_error": np.mean(self.summary_metrics["errors"]),
+            "summary/avg_kl_div": np.mean(self.summary_metrics["kl_divs"]),
             "summary/avg_efficiency": np.mean(self.summary_metrics["efficiencies"]),
         }
         
         # Find best configurations
         speedups = np.array(self.summary_metrics["speedups"])
-        errors = np.array(self.summary_metrics["errors"])
+        errors = np.array(self.summary_metrics["kl_divs"])
         
-        # Best speedup with <1% error
+        # Best speedup with KL divergence < 1e-2
         good_accuracy_mask = errors < 0.01
         if good_accuracy_mask.any():
             best_speedup_good_accuracy = speedups[good_accuracy_mask].max()
-            summary["summary/best_speedup_1pct_error"] = best_speedup_good_accuracy
+            summary["summary/best_speedup_low_kl"] = best_speedup_good_accuracy
         
         wandb.log(summary)
     
@@ -323,7 +330,7 @@ class WandbCircuitBenchmark:
         n_inputs = data_array[:, col_indices['n_input']].astype(int)
         ranks = data_array[:, col_indices['rank']].astype(int)
         speedups = data_array[:, col_indices['speedup']].astype(float)
-        rel_errors = data_array[:, col_indices['rel_error']].astype(float)
+        kl_divs = data_array[:, col_indices['kl_div']].astype(float)
         efficiencies = data_array[:, col_indices['efficiency']].astype(float)
         matrix_sizes = data_array[:, col_indices['matrix_size']]
         
@@ -350,13 +357,13 @@ class WandbCircuitBenchmark:
         wandb.log({"charts/speedup_vs_rank": wandb.Image(fig_speedup)})
         plt.close()
         
-        # 2. Error vs Rank (log scale)
+        # 2. KL Divergence vs Rank (log scale)
         fig_error = plt.figure(figsize=(10, 6))
         for n in unique_n_inputs:
             # Filter data for this n_input
             mask = n_inputs == n
             n_ranks = ranks[mask]
-            n_errors = rel_errors[mask]
+            n_errors = kl_divs[mask]
             
             # Sort by rank for line plot
             sort_idx = np.argsort(n_ranks)
@@ -367,8 +374,8 @@ class WandbCircuitBenchmark:
                         label=f'n={n}', markersize=8)
         
         plt.xlabel('Rank')
-        plt.ylabel('Relative Error')
-        plt.title('Approximation Error vs Rank')
+        plt.ylabel('KL Divergence')
+        plt.title('Approximation Error (KL) vs Rank')
         plt.legend()
         plt.grid(True, alpha=0.3)
         wandb.log({"charts/error_vs_rank": wandb.Image(fig_error)})
@@ -377,13 +384,13 @@ class WandbCircuitBenchmark:
         # 3. Trade-off: Error vs Speedup with rank as color
         fig_tradeoff = plt.figure(figsize=(10, 6))
         scatter = plt.scatter(
-            speedups, rel_errors, 
+            speedups, kl_divs,
             c=ranks, cmap='viridis', s=50, alpha=0.7
         )
         plt.xlabel('Speedup Factor')
-        plt.ylabel('Relative Error')
+        plt.ylabel('KL Divergence')
         plt.yscale('log')
-        plt.title('Accuracy vs Performance Trade-off')
+        plt.title('Accuracy (KL) vs Performance Trade-off')
         plt.colorbar(scatter, label='Rank')
         plt.grid(True, alpha=0.3)
         wandb.log({"charts/tradeoff": wandb.Image(fig_tradeoff)})
