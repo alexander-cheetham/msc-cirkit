@@ -55,19 +55,17 @@ class NystromSumLayer_old(nn.Module):
                 U, S, Vh = torch.linalg.svd(A, full_matrices=False)  
 
                 # 2. Extend singular vectors ----------------------------
-                Λinv = torch.diag(1.0 / S)
+                L_inv = torch.diag(1.0 / S)
                 F_blk = W_f[I_c][:, J]                          # (K_o-s, s)
                 B_blk = W_f[I][:, J_c]                          # (s, K_i-s)
-                tilde_U = F_blk @ Vh.T @ Λinv
-                tilde_H = Λinv @ U.T @ B_blk
+                tilde_U = F_blk @ Vh.T @ L_inv
+                tilde_H = L_inv @ U.T @ B_blk
 
                 # 3. Assemble Nyström factors --------------------------
                 C   = torch.cat([A, F_blk], dim=0)              # (K_o, s)
                 R   = torch.cat([A, B_blk], dim=1)              # (s, K_i)
                 A_pinv = torch.linalg.pinv(A)                   # (s, s)
 
-                U_lr.append(C)                                  # (K_o, s)
-                V_lr.append((A_pinv @ R).T)                     # (K_i, s)
 
             # Stack over folds and register as parameters (trainable)
             self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)
@@ -122,7 +120,7 @@ class NystromSumLayer(TorchSumLayer):
         # 2 · Build Nyström factors from the *dense* weight we just copied
         # ------------------------------------------------------------------
         with torch.no_grad():
-            self._build_factors_from()
+            self._build_factors_from(original_layer)
         del self.weight 
 
     
@@ -161,46 +159,69 @@ class NystromSumLayer(TorchSumLayer):
 
     # ------------------------------------------------------------------
     # helper ------------------------------------------------------------
-    def _build_factors_from(self,):
-        with torch.no_grad():                                   # saves memory 
-            #TODO: IMPROVE THIS BECAUSE IT STILL MATERIALISES THE MATRIX                        
-            # weight:  (F, K_o, K_i)
-            W= self.weight()
-            F_, K_o, K_i = W.shape
-            
+    def _build_factors_from(self, original_layer: TorchSumLayer, pivots=None):
+        """Construct Nyström factors without materialising the Kronecker weight.
+
+        Parameters
+        ----------
+        original_layer : TorchSumLayer
+            Layer providing the Kronecker-product weights.
+        pivots : list[tuple[Tensor, Tensor]] | None
+            Optional list of pivot index pairs ``(I, J)`` for each fold.  If not
+            provided, random pivots are chosen as before.
+        """
+        with torch.no_grad():                                   # saves memory
+            # ``original_layer.weight`` encodes the Kronecker product of a
+            # smaller matrix with itself.  Extract that base matrix so we can
+            # compute required sub-blocks without building the full product.
+            if hasattr(original_layer.weight, "_nodes"):
+                base_weight = original_layer.weight._nodes[0]()
+            else:
+                base_weight = original_layer.weight()
+            F_, K_o_base, K_i_base = base_weight.shape
+            K_o = K_o_base * K_o_base
+            K_i = K_i_base * K_i_base
             s = self.rank                                       # local alias
 
             U_lr, V_lr = [], []
 
             for f in range(F_):
-                W_f = W[f]                                      # (K_o, K_i)
+                M_f = base_weight[f]
 
-                # 0. random pivot indices  -------------------------------
-                I = torch.randperm(K_o, device=W_f.device)[:s]
-                J = torch.randperm(K_i, device=W_f.device)[:s]
-                I_c = torch.tensor([i for i in range(K_o) if i not in I],
-                                   device=W_f.device)
-                J_c = torch.tensor([j for j in range(K_i) if j not in J],
-                                   device=W_f.device)
+                def kron_block(rows, cols):
+                    r0 = torch.div(rows, K_o_base, rounding_mode='floor')
+                    r1 = rows % K_o_base
+                    c0 = torch.div(cols, K_i_base, rounding_mode='floor')
+                    c1 = cols % K_i_base
+                    return M_f[r0][:, c0] * M_f[r1][:, c1]
 
-                # 1. SVD of pivot block  -------------------------------
-                A = W_f[I][:, J]                                # (s, s)
-                U, S, Vh = torch.linalg.svd(A, full_matrices=False)  
+                if pivots is not None:
+                    I, J = pivots[f]
+                else:
+                    I = torch.randperm(K_o, device=M_f.device)[:s]
+                    J = torch.randperm(K_i, device=M_f.device)[:s]
+                mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
+                mask_I[I] = False
+                I_c = mask_I.nonzero(as_tuple=False).flatten()
+                mask_J = torch.ones(K_i, dtype=torch.bool, device=M_f.device)
+                mask_J[J] = False
+                J_c = mask_J.nonzero(as_tuple=False).flatten()
 
-                # 2. Extend singular vectors ----------------------------
-                Λinv = torch.diag(1.0 / S)
-                F_blk = W_f[I_c][:, J]                          # (K_o-s, s)
-                B_blk = W_f[I][:, J_c]                          # (s, K_i-s)
-                tilde_U = F_blk @ Vh.T @ Λinv
-                tilde_H = Λinv @ U.T @ B_blk
+                A = kron_block(I, J)
+                U, S, Vh = torch.linalg.svd(A, full_matrices=False)
 
-                # 3. Assemble Nyström factors --------------------------
-                C   = torch.cat([A, F_blk], dim=0)              # (K_o, s)
-                R   = torch.cat([A, B_blk], dim=1)              # (s, K_i)
-                A_pinv = torch.linalg.pinv(A)                   # (s, s)
+                L_inv = torch.diag(1.0 / S)
+                F_blk = kron_block(I_c, J)
+                B_blk = kron_block(I, J_c)
+                tilde_U = F_blk @ Vh.T @ L_inv
+                tilde_H = L_inv @ U.T @ B_blk
 
-                U_lr.append(C)                                  # (K_o, s)
-                V_lr.append((A_pinv @ R).T)                     # (K_i, s)
+                C   = torch.cat([A, F_blk], dim=0)
+                R   = torch.cat([A, B_blk], dim=1)
+                A_pinv = torch.linalg.pinv(A)
+
+                U_lr.append(C)
+                V_lr.append((A_pinv @ R).T)
 
             # Stack over folds and register as parameters (trainable)
             self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)
