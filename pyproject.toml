@@ -8,13 +8,14 @@ dependencies = [
     "pygraphviz",
     "wandb>=0.17",
     "jupyter>=1.1.1",
-    "cirkit",  # real CirKit library
     "libcirkit>=0.2.1",
     "matplotlib>=3.10.1",
     "torch>=2.6.0",
     "torchvision>=0.21.0",
     "tqdm>=4.67.1",
-    "pytest>=8.0",
 ]
 [tool.setuptools.packages.find]
 where = ["src"]  # or ["."]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
