@@ -66,6 +66,9 @@ class NystromSumLayer_old(nn.Module):
                 R   = torch.cat([A, B_blk], dim=1)              # (s, K_i)
                 A_pinv = torch.linalg.pinv(A)                   # (s, s)
 
+                U_lr.append(C)                                  # (K_o, s)
+                V_lr.append((A_pinv @ R).T)                     # (K_i, s)
+
 
             # Stack over folds and register as parameters (trainable)
             self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)

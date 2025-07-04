@@ -46,16 +46,21 @@ def test_new_matches_old():
     F, Ko_base, Ki_base = 1, 3, 2
     base = torch.randn(F, Ko_base, Ki_base)
 
-    def weight_fn():
-        kron = [torch.kron(base[f], base[f]) for f in range(F)]
-        return torch.stack(kron, dim=0)
-    weight_fn._nodes = [lambda: base]
+    kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
+    from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
+
+    weight_node = TorchTensorParameter(Ko_base * Ko_base, Ki_base * Ki_base, num_folds=F)
+    weight_node.reset_parameters()
+    with torch.no_grad():
+        weight_node._ptensor.copy_(kron)
+    weight_param = weight_node
+    weight_param._nodes = [lambda: base]
 
     orig = TorchSumLayer(
         num_input_units=Ki_base**2,
         num_output_units=Ko_base**2,
         arity=1,
-        weight=weight_fn,
+        weight=weight_param,
         semiring=None,
         num_folds=F,
     )
@@ -84,17 +89,20 @@ def test_new_faster_than_old():
     F, Ko_base, Ki_base = 2, 8, 8
     base = torch.randn(F, Ko_base, Ki_base)
 
-    def weight_fn():
-        kron = [torch.kron(base[f], base[f]) for f in range(F)]
-        return torch.stack(kron, dim=0)
+    kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
+    from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
 
-    weight_fn._nodes = [lambda: base]
-
+    weight_node = TorchTensorParameter(Ko_base * Ko_base, Ki_base * Ki_base, num_folds=F)
+    weight_node.reset_parameters()
+    with torch.no_grad():
+        weight_node._ptensor.copy_(kron)
+    weight_param = weight_node
+    weight_param._nodes = [lambda: base]
     orig = TorchSumLayer(
         num_input_units=Ki_base**2,
         num_output_units=Ko_base**2,
         arity=1,
-        weight=weight_fn,
+        weight=weight_param,
         semiring=None,
         num_folds=F,
     )
