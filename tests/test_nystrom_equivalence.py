@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - cirkit unavailable
     TorchSumLayer = None
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+torch.cuda.empty_cache()
 def dense_nystrom(W: torch.Tensor, rank: int, pivots):
     F, Ko, Ki = W.shape
     U_lr, V_lr = [], []
@@ -44,8 +44,9 @@ def dense_nystrom(W: torch.Tensor, rank: int, pivots):
 
 @pytest.mark.skipif(TorchSumLayer is None, reason="cirkit library not installed")
 def test_new_matches_old():
+    torch.cuda.empty_cache()
     torch.manual_seed(0)
-    F, Ko_base, Ki_base = 10, 20, 20
+    F, Ko_base, Ki_base = 9, 80, 80
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
@@ -84,22 +85,17 @@ def test_new_matches_old():
     layer = NystromSumLayer(orig, rank=rank)
     layer._build_factors_from(orig, pivots=pivots)
     approx = layer.weight
-    approx_np = approx.detach().cpu().numpy().reshape(-1)
-    with open("approx.csv", "w") as f:
-        for val in approx_np:
-            f.write(f"{val}\n")
-    baseline_np = baseline.detach().cpu().numpy().reshape(-1)
-    with open("baseline.csv", "w") as f:
-        for val in baseline_np:
-            f.write(f"{val}\n")
-    assert torch.allclose(approx, baseline, atol=1e-5)
+    # print(f"approx{approx}")
+    # print(f"baseline{baseline}")
+    assert torch.allclose(approx, baseline, atol=1e-7)
 
 
 @pytest.mark.skipif(TorchSumLayer is None, reason="cirkit library not installed")
 def test_new_faster_than_old():
+    torch.cuda.empty_cache()
     torch.manual_seed(0)
 
-    F, Ko_base, Ki_base = 20, 80, 80
+    F, Ko_base, Ki_base = 9, 80, 80
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
