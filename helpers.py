@@ -1,6 +1,7 @@
 from types import MethodType
 from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
+from symbolic_nystrom import NystromSumLayer as SymbolicNystromSumLayer
 
 def build_circuit_one_sum(
     self,
@@ -68,6 +69,67 @@ def define_circuit_one_sum(
     return rg.build_circuit(
         input_factory=input_factory,
         sum_weight_factory=sum_param_factory,
+        num_input_units=num_input_units,
+        num_sum_units=num_sum_units,
+    )
+
+
+def build_circuit_one_nystrom(
+    self,
+    *,
+    input_factory,
+    weight_factory,
+    rank: int,
+    num_input_units: int,
+    num_sum_units: int,
+    debug: bool = False,
+) -> Circuit:
+    """Build a circuit using a symbolic Nyström sum layer."""
+
+    leaves = [node for node in self.topological_ordering() if not self.region_inputs(node)]
+
+    layers: list = []
+    in_layers: dict = {}
+
+    gaussians = []
+    for leaf in leaves:
+        gauss = input_factory(leaf.scope, num_input_units)
+        layers.append(gauss)
+        gaussians.append(gauss)
+
+    sum_layer = SymbolicNystromSumLayer(
+        num_input_units=num_input_units,
+        num_output_units=num_sum_units,
+        rank=rank,
+        arity=len(gaussians),
+        U_factory=weight_factory,
+        V_factory=weight_factory,
+    )
+    layers.append(sum_layer)
+    in_layers[sum_layer] = gaussians
+
+    if debug:
+        print(layers, "---------------\n\n\n", in_layers, "---------------\n\n\n", [sum_layer])
+
+    return Circuit(layers, in_layers, outputs=[sum_layer])
+
+
+def define_circuit_one_nystrom(
+    num_input_units: int = 3,
+    num_sum_units: int = 2,
+    rank: int = 2,
+) -> Circuit:
+    rg = RandomBinaryTree(1, depth=None, num_repetitions=1, seed=42)
+    rg.build_circuit = MethodType(build_circuit_one_nystrom, rg)
+
+    input_factory = lambda scope, n: GaussianLayer(scope=scope, num_output_units=n)
+    p = Parameterization(activation="softmax", initialization="normal")
+    param_factory = parameterization_to_factory(p)
+
+    return rg.build_circuit(
+        input_factory=input_factory,
+        weight_factory=param_factory,
+        rank=rank,
         num_input_units=num_input_units,
         num_sum_units=num_sum_units,
     )
