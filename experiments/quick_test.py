@@ -26,8 +26,8 @@ def quick_test():
 
     print("Running quick test...")
     
-    # Small test case
-    n_input, n_sum, rank = 20, 20, 10
+    # Larger test case
+    n_input, n_sum, rank = 100, 100, 100
     batch_size = 32
     
     # Build circuits
