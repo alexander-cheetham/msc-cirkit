@@ -95,12 +95,12 @@ def replace_sum_layers(module: nn.Module, *, rank: int) -> None:
     module : nn.Module         # csc, or any sub-module
     rank   : int               # target Nyström rank `s`
     """
-    for name, child in list(module.named_children()):              # `named_children` → immediate submodules :contentReference[oaicite:0]{index=0}
+    for name, child in list(module.named_children()):             
         if isinstance(child, TorchSumLayer):
-            # swap in-place – the trick suggested in the PyTorch forums :contentReference[oaicite:1]{index=1}
+            # swap in-place 
             setattr(module, name, NystromSumLayer(child, rank=rank))
         else:
-            # descend the tree (recursion pattern used in StackOverflow example) :contentReference[oaicite:2]{index=2}
+            # descend the tree 
             replace_sum_layers(module=child, rank=rank)
 
 def fix_address_book_modules(circuit, verbose=False) -> bool:
