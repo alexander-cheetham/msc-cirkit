@@ -47,7 +47,7 @@ class WandbCircuitBenchmark:
             "orig_time_ms", "nystrom_time_ms", "speedup", "theoretical_speedup",
             "orig_memory_mb", "nystrom_memory_mb", "memory_reduction",
             "orig_gflops", "nystrom_gflops", "flop_reduction",
-            "nll", "kl_div", "efficiency"
+            "nll_diff", "kl_div", "efficiency"
         ])
         
         # Summary metrics
@@ -194,17 +194,20 @@ class WandbCircuitBenchmark:
                 # current implementation assumes the circuit outputs log
                 # likelihoods for each sample.
 
-                nll_per_sample = -nystrom_output
-                nll = nll_per_sample.mean()
+                nll_orig = -orig_output
+                nll_nystrom = -nystrom_output
+                nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
+                nll_diff = nll_diff_per_sample.mean()
+
 
                 p_orig = orig_output.exp()
                 kl_per_sample = p_orig * (orig_output - nystrom_output)
                 kl_div = kl_per_sample.mean()
 
                 wandb.log({
-                    "accuracy/nll": nll.item(),
+                    "accuracy/nll_diff": nll_diff.item(),
                     "accuracy/kl_div": kl_div.item(),
-                    "accuracy/nll_std": nll_per_sample.std().item(),
+                    "accuracy/nll_diff_std": nll_diff_per_sample.std().item(),
                     "accuracy/kl_std": kl_per_sample.std().item(),
                     "accuracy/kl_max": kl_per_sample.max().item(),
                     "step": step
@@ -229,7 +232,7 @@ class WandbCircuitBenchmark:
                 speedup, theoretical_speedup,
                 orig_memory, nystrom_memory, memory_reduction,
                 orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-                nll.item(), kl_div.item(), efficiency
+                nll_diff.item(), kl_div.item(), efficiency
             )
             
             # Log efficiency metrics
@@ -246,7 +249,7 @@ class WandbCircuitBenchmark:
                 'batch_size': batch_size,
                 'speedup': speedup,
                 'memory_reduction': memory_reduction,
-                'nll': nll.item(),
+                'nll_diff': nll_diff.item(),
                 'kl_div': kl_div.item(),
                 'efficiency': efficiency
             }

@@ -23,18 +23,21 @@ def plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs):
 
 
 
+
 def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label):
     """Plot approximation error against rank."""
     fig = plt.figure(figsize=(10, 6))
     for n in unique_n_inputs:
         mask = n_inputs == n
         n_ranks = ranks[mask]
+
         n_errors = rel_errors[mask]
         sort_idx = np.argsort(n_ranks)
         n_ranks_sorted = n_ranks[sort_idx]
         n_errors_sorted = n_errors[sort_idx]
         plt.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', label=f'n={n}', markersize=8)
     plt.xlabel('Rank')
+
     plt.ylabel(error_label)
     plt.title('Approximation Error vs Rank')
     plt.legend()
