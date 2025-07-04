@@ -56,9 +56,10 @@ def plot_kl_nll_vs_rank(n_inputs, ranks, kl_divs, nlls, unique_n_inputs):
             sort_idx = np.argsort(n_ranks)
             n_ranks_sorted = n_ranks[sort_idx]
             n_errors_sorted = n_errors[sort_idx]
-            ax.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', label=f'n={n}', markersize=8)
+            ax.plot(n_ranks_sorted, n_errors_sorted, 'o-', label=f'n={n}', markersize=8)
         ax.set_xlabel('Rank')
         ax.set_ylabel(label)
+        ax.axhline(0, color='red', linestyle='--', linewidth=1)
         ax.set_title(label)
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -99,35 +100,13 @@ def plot_tradeoff_kl_nll(speedups, kl_divs, nlls, ranks):
         ax.axhline(0, color='red', linestyle='--', linewidth=1)
         ax.set_title(f'Accuracy vs Performance: {label}')
         ax.grid(True, alpha=0.3)
-    fig.colorbar(scatters[0], ax=axes.ravel().tolist(), label='Rank')
-    fig.tight_layout()
+
+    fig.subplots_adjust(right=0.86, wspace=0.3)
+    cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+    fig.colorbar(scatters[0], cax=cbar_ax, label='Rank')
     wandb.log({"charts/tradeoff": wandb.Image(fig)})
     plt.close()
 
-
-def plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes):
-    """Plot heatmap of efficiency values."""
-    fig = plt.figure(figsize=(12, 8))
-    efficiency_matrix = np.full((len(unique_ranks), len(unique_matrix_sizes)), np.nan)
-    for i, rank in enumerate(unique_ranks):
-        for j, mat_size in enumerate(unique_matrix_sizes):
-            mask = (ranks == rank) & (matrix_sizes == mat_size)
-            if mask.any():
-                efficiency_matrix[i, j] = efficiencies[mask][0]
-    im = plt.imshow(efficiency_matrix, cmap='RdYlGn', aspect='auto')
-    plt.colorbar(im, label='Efficiency')
-    plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-    plt.yticks(range(len(unique_ranks)), unique_ranks)
-    plt.xlabel('Matrix Size')
-    plt.ylabel('Rank')
-    for i in range(len(unique_ranks)):
-        for j in range(len(unique_matrix_sizes)):
-            if not np.isnan(efficiency_matrix[i, j]):
-                plt.text(j, i, f'{efficiency_matrix[i, j]:.2f}', ha='center', va='center')
-    plt.title('Efficiency: Actual/Theoretical Speedup')
-    plt.tight_layout()
-    wandb.log({"charts/efficiency_heatmap": wandb.Image(fig)})
-    plt.close()
 
 
 def plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=False):
@@ -178,7 +157,6 @@ def create_wandb_visualisations(results_table, config) -> None:
     nlls = data_array[:, col_indices['nll']].astype(float) if 'nll' in col_indices else None
     rel_errors = data_array[:, col_indices['rel_error']].astype(float) if 'rel_error' in col_indices else None
 
-    efficiencies = data_array[:, col_indices['efficiency']].astype(float)
     matrix_sizes = data_array[:, col_indices['matrix_size']]
     memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
 
@@ -207,6 +185,5 @@ def create_wandb_visualisations(results_table, config) -> None:
         plot_error_vs_rank(n_inputs, ranks, nlls, unique_n_inputs, 'Negative Log-Likelihood')
         plot_tradeoff(speedups, nlls, ranks, 'Negative Log-Likelihood', log_y=False)
 
-    plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes)
     plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=config.powers_of_two)
 
