@@ -9,16 +9,19 @@ from cirkit.symbolic.initializers import NormalInitializer, ConstantTensorInitia
 from cirkit.backend.torch.layers.inner import TorchSumLayer
 from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
 from cirkit.backend.torch.rules.layers import DEFAULT_LAYER_COMPILATION_RULES
+from nystromlayer import NystromSumLayer
 import torch
 
 
-def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> TorchSumLayer:
+def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLayer:
+    """Compile the symbolic layer to a torch ``NystromSumLayer``."""
     U = compiler.compile_parameter(sl.U)
     V = compiler.compile_parameter(sl.V)
-    U.reset_parameters()
-    V.reset_parameters()
+
     weight_val = torch.einsum("fok,fik->foi", U(), V())
-    init = compiler.compile_initializer(ConstantTensorInitializer(weight_val.detach().cpu().numpy()))
+    init = compiler.compile_initializer(
+        ConstantTensorInitializer(weight_val.detach().cpu().numpy())
+    )
     weight = TorchTensorParameter(
         sl.num_output_units,
         sl.num_input_units * sl.arity,
@@ -26,13 +29,16 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> TorchSumLayer:
         initializer_=init,
         num_folds=U.num_folds,
     )
-    return TorchSumLayer(
+    dense_layer = TorchSumLayer(
         sl.num_input_units,
         sl.num_output_units,
         arity=sl.arity,
         weight=weight,
         semiring=compiler.semiring,
     )
+    nys = NystromSumLayer(dense_layer, rank=sl.rank)
+    nys.weight_orig = weight_val
+    return nys
 
 
 
