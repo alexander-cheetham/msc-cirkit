@@ -7,6 +7,12 @@ uv venv
 uv pip install -e .[test]
 ```
 
+Install optional graph visualization dependencies:
+
+```bash
+uv pip install -e .[graphviz]
+```
+
 Run tests:
 
 ```bash
