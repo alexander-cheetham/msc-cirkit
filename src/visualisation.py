@@ -22,32 +22,36 @@ def plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs):
     plt.close()
 
 
-def plot_error_vs_rank(n_inputs, ranks, kl_divs, unique_n_inputs):
-    """Plot KL divergence against rank."""
+
+
+def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label):
+    """Plot approximation error against rank."""
     fig = plt.figure(figsize=(10, 6))
     for n in unique_n_inputs:
         mask = n_inputs == n
         n_ranks = ranks[mask]
-        n_errors = kl_divs[mask]
+
+        n_errors = rel_errors[mask]
         sort_idx = np.argsort(n_ranks)
         n_ranks_sorted = n_ranks[sort_idx]
         n_errors_sorted = n_errors[sort_idx]
         plt.semilogy(n_ranks_sorted, n_errors_sorted, 'o-', label=f'n={n}', markersize=8)
     plt.xlabel('Rank')
-    plt.ylabel('KL Divergence')
-    plt.title('KL Divergence vs Rank')
+
+    plt.ylabel(error_label)
+    plt.title('Approximation Error vs Rank')
     plt.legend()
     plt.grid(True, alpha=0.3)
     wandb.log({"charts/error_vs_rank": wandb.Image(fig)})
     plt.close()
 
 
-def plot_tradeoff(speedups, kl_divs, ranks):
-    """Plot accuracy vs performance trade-off using KL divergence."""
+def plot_tradeoff(speedups, rel_errors, ranks, error_label):
+    """Plot accuracy vs performance trade-off."""
     fig = plt.figure(figsize=(10, 6))
-    scatter = plt.scatter(speedups, kl_divs, c=ranks, cmap='viridis', s=50, alpha=0.7)
+    scatter = plt.scatter(speedups, rel_errors, c=ranks, cmap='viridis', s=50, alpha=0.7)
     plt.xlabel('Speedup Factor')
-    plt.ylabel('KL Divergence')
+    plt.ylabel(error_label)
     plt.yscale('log')
     plt.title('Accuracy vs Performance Trade-off')
     plt.colorbar(scatter, label='Rank')
@@ -124,7 +128,15 @@ def create_wandb_visualisations(results_table, config) -> None:
     n_inputs = data_array[:, col_indices['n_input']].astype(int)
     ranks = data_array[:, col_indices['rank']].astype(int)
     speedups = data_array[:, col_indices['speedup']].astype(float)
-    kl_divs = data_array[:, col_indices['kl_div']].astype(float)
+    if 'rel_error' in col_indices:
+        rel_errors = data_array[:, col_indices['rel_error']].astype(float)
+        error_label = 'Relative Error'
+    elif 'kl_div' in col_indices:
+        rel_errors = data_array[:, col_indices['kl_div']].astype(float)
+        error_label = 'KL Divergence'
+    else:
+        rel_errors = None
+        error_label = 'Error'
     efficiencies = data_array[:, col_indices['efficiency']].astype(float)
     matrix_sizes = data_array[:, col_indices['matrix_size']]
     memory_reductions = data_array[:, col_indices['memory_reduction']].astype(float)
@@ -140,8 +152,9 @@ def create_wandb_visualisations(results_table, config) -> None:
         unique_matrix_sizes = sorted(set(matrix_sizes))
 
     plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs)
-    plot_error_vs_rank(n_inputs, ranks, kl_divs, unique_n_inputs)
-    plot_tradeoff(speedups, kl_divs, ranks)
+    if rel_errors is not None:
+        plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label)
+        plot_tradeoff(speedups, rel_errors, ranks, error_label)
     plot_efficiency_heatmap(ranks, matrix_sizes, efficiencies, unique_ranks, unique_matrix_sizes)
     plot_memory_reduction(ranks, matrix_sizes, memory_reductions, unique_ranks, unique_matrix_sizes, powers_of_two=config.powers_of_two)
 

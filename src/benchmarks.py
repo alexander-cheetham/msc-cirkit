@@ -199,6 +199,7 @@ class WandbCircuitBenchmark:
                 nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
                 nll_diff = nll_diff_per_sample.mean()
 
+
                 p_orig = orig_output.exp()
                 kl_per_sample = p_orig * (orig_output - nystrom_output)
                 kl_div = kl_per_sample.mean()
