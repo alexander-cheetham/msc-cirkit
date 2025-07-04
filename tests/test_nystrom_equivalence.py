@@ -16,6 +16,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - cirkit unavailable
     TorchSumLayer = None
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def dense_nystrom(W: torch.Tensor, rank: int, pivots):
     F, Ko, Ki = W.shape
     U_lr, V_lr = [], []
@@ -44,13 +46,14 @@ def dense_nystrom(W: torch.Tensor, rank: int, pivots):
 def test_new_matches_old():
     torch.manual_seed(0)
     F, Ko_base, Ki_base = 1, 3, 2
-    base = torch.randn(F, Ko_base, Ki_base)
+    base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
     from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
 
     weight_node = TorchTensorParameter(Ko_base * Ko_base, Ki_base * Ki_base, num_folds=F)
     weight_node.reset_parameters()
+    weight_node.to(device)
     with torch.no_grad():
         weight_node._ptensor.copy_(kron)
     weight_param = weight_node
@@ -67,8 +70,8 @@ def test_new_matches_old():
     rank = 2
     Ko = Ko_base * Ko_base
     Ki = Ki_base * Ki_base
-    I = torch.randperm(Ko)[:rank]
-    J = torch.randperm(Ki)[:rank]
+    I = torch.randperm(Ko, device=device)[:rank]
+    J = torch.randperm(Ki, device=device)[:rank]
     pivots = [(I, J)]
 
     # Dense baseline
@@ -87,13 +90,14 @@ def test_new_faster_than_old():
     torch.manual_seed(0)
 
     F, Ko_base, Ki_base = 2, 8, 8
-    base = torch.randn(F, Ko_base, Ki_base)
+    base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
     from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
 
     weight_node = TorchTensorParameter(Ko_base * Ko_base, Ki_base * Ki_base, num_folds=F)
     weight_node.reset_parameters()
+    weight_node.to(device)
     with torch.no_grad():
         weight_node._ptensor.copy_(kron)
     weight_param = weight_node

@@ -8,6 +8,8 @@ try:
     import torch
 except Exception:  # pragma: no cover - torch missing
     torch = None
+else:
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 try:  # pragma: no cover - optional dependency
     from nystromlayer import NystromSumLayer
@@ -31,13 +33,15 @@ def quick_test():
     # Build circuits
     print("Building original circuit...")
     orig = build_and_compile_circuit(n_input, n_sum)
+    orig = orig.to(DEVICE)
     
     print("Building Nyström circuit...")
     nys = build_and_compile_circuit(n_input, n_sum)
     nys.layers[1] = NystromSumLayer(nys.layers[1], rank)
+    nys = nys.to(DEVICE)
     
     # Test
-    x = torch.randn(1, batch_size, n_input**2)
+    x = torch.randn(1, batch_size, n_input**2, device=DEVICE)
     
     # Check outputs match approximately
     with torch.no_grad():
