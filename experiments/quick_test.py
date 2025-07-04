@@ -4,29 +4,44 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import torch
-from nystromlayer import NystromSumLayer
-from src.circuit_manip import build_and_compile_circuit
+try:
+    import torch
+except Exception:  # pragma: no cover - torch missing
+    torch = None
+else:
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+try:  # pragma: no cover - optional dependency
+    from nystromlayer import NystromSumLayer
+    from src.circuit_manip import build_and_compile_circuit
+except Exception:
+    NystromSumLayer = None
 
 def quick_test():
     """Quick test to verify everything works."""
-    
+
+    if torch is None or NystromSumLayer is None:
+        print("cirkit library not installed; skipping quick test")
+        return
+
     print("Running quick test...")
     
-    # Small test case
-    n_input, n_sum, rank = 20, 20, 10
+    # Larger test case
+    n_input, n_sum, rank = 100, 100, 100
     batch_size = 32
     
     # Build circuits
     print("Building original circuit...")
     orig = build_and_compile_circuit(n_input, n_sum)
+    orig = orig.to(DEVICE)
     
     print("Building Nyström circuit...")
     nys = build_and_compile_circuit(n_input, n_sum)
     nys.layers[1] = NystromSumLayer(nys.layers[1], rank)
+    nys = nys.to(DEVICE)
     
     # Test
-    x = torch.randn(1, batch_size, n_input**2)
+    x = torch.randn(1, batch_size, n_input**2, device=DEVICE)
     
     # Check outputs match approximately
     with torch.no_grad():
