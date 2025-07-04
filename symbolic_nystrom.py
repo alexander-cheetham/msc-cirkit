@@ -18,7 +18,9 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLaye
     U = compiler.compile_parameter(sl.U)
     V = compiler.compile_parameter(sl.V)
 
-    weight_val = torch.einsum("fok,fik->foi", U(), V())
+    U_val = U()
+    V_val = V()
+    weight_val = torch.einsum("fok,fik->foi", U_val, V_val)
     init = compiler.compile_initializer(
         ConstantTensorInitializer(weight_val.detach().cpu().numpy())
     )
@@ -37,7 +39,7 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLaye
         semiring=compiler.semiring,
     )
     nys = NystromSumLayer(dense_layer, rank=sl.rank)
-    nys.weight_orig = weight_val
+    nys.weight_orig = weight_val.detach()
     return nys
 
 

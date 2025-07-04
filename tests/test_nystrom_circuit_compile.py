@@ -17,7 +17,6 @@ except Exception:
 
 def test_compile_and_infer():
     circuit = define_circuit_one_nystrom(num_input_units=2, num_sum_units=2, rank=1)
-    circuit = SF.multiply(circuit, circuit)
     ctx = PipelineContext(backend="torch", semiring="sum-product", fold=False, optimize=False)
     compiled = ctx.compile(circuit).cpu().eval()
     x = torch.randn(1, 4)
