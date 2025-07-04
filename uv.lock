@@ -293,7 +293,6 @@ dependencies = [
     { name = "jupyter" },
     { name = "libcirkit" },
     { name = "matplotlib" },
-    { name = "pygraphviz" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "tqdm" },
@@ -304,20 +303,23 @@ dependencies = [
 test = [
     { name = "pytest" },
 ]
+graphviz = [
+    { name = "pygraphviz" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "libcirkit", specifier = ">=0.2.1" },
     { name = "matplotlib", specifier = ">=3.10.1" },
-    { name = "pygraphviz" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
+    { name = "pygraphviz", marker = "extra == 'graphviz'" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "torchvision", specifier = ">=0.21.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "wandb", specifier = ">=0.17" },
 ]
-provides-extras = ["test"]
+provides-extras = ["graphviz", "test"]
 
 [[package]]
 name = "click"
