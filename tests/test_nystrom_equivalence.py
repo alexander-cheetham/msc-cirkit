@@ -45,7 +45,7 @@ def dense_nystrom(W: torch.Tensor, rank: int, pivots):
 @pytest.mark.skipif(TorchSumLayer is None, reason="cirkit library not installed")
 def test_new_matches_old():
     torch.manual_seed(0)
-    F, Ko_base, Ki_base = 1, 3, 2
+    F, Ko_base, Ki_base = 10, 20, 20
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
@@ -70,9 +70,11 @@ def test_new_matches_old():
     rank = 2
     Ko = Ko_base * Ko_base
     Ki = Ki_base * Ki_base
-    I = torch.randperm(Ko, device=device)[:rank]
-    J = torch.randperm(Ki, device=device)[:rank]
-    pivots = [(I, J)]
+    pivots = []
+    for f in range(F):
+        I = torch.randperm(Ko, device=device)[:rank]
+        J = torch.randperm(Ki, device=device)[:rank]
+        pivots.append((I, J))
 
     # Dense baseline
     W_full = orig.weight()
@@ -82,6 +84,14 @@ def test_new_matches_old():
     layer = NystromSumLayer(orig, rank=rank)
     layer._build_factors_from(orig, pivots=pivots)
     approx = layer.weight
+    approx_np = approx.detach().cpu().numpy().reshape(-1)
+    with open("approx.csv", "w") as f:
+        for val in approx_np:
+            f.write(f"{val}\n")
+    baseline_np = baseline.detach().cpu().numpy().reshape(-1)
+    with open("baseline.csv", "w") as f:
+        for val in baseline_np:
+            f.write(f"{val}\n")
     assert torch.allclose(approx, baseline, atol=1e-5)
 
 
@@ -89,7 +99,7 @@ def test_new_matches_old():
 def test_new_faster_than_old():
     torch.manual_seed(0)
 
-    F, Ko_base, Ki_base = 2, 8, 8
+    F, Ko_base, Ki_base = 20, 80, 80
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
@@ -116,5 +126,5 @@ def test_new_faster_than_old():
 
     t_old = timeit.timeit(lambda: NystromSumLayer_old(orig, rank), number=3)
     t_new = timeit.timeit(lambda: NystromSumLayer(orig, rank=rank), number=3)
-
+    print(f"Old time: {t_old:.6f}s, New time: {t_new:.6f}s")
     assert t_new < t_old
