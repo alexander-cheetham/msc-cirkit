@@ -41,7 +41,6 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLaye
         weight=weight,
         semiring=compiler.semiring,
     )
-    # Initialize the dense weight so the Nyström layer can compute its factors
     dense_layer.weight.reset_parameters()
     nys = TorchNystromSumLayer(dense_layer, rank=sl.rank)
     nys.weight_orig = weight_val.detach()

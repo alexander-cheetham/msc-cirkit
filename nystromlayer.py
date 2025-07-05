@@ -106,7 +106,7 @@ class NystromSumLayer(TorchSumLayer):
             num_input_units=original_layer.num_input_units,
             num_output_units=original_layer.num_output_units,
             arity=original_layer.arity,
-            weight=original_layer.weight,     
+            weight=original_layer.weight,
             semiring=original_layer.semiring,
             num_folds=original_layer.num_folds,
         )
@@ -114,6 +114,7 @@ class NystromSumLayer(TorchSumLayer):
         # 1 · Rank bookkeeping
         # ------------------------------------------------------------------
         self.rank = int(rank)
+        self.weight_orig = original_layer.weight()
         # buffer → moves with .to()/ .cuda() but is not trainable
         self.register_buffer(
             "rank_param", torch.tensor(self.rank, dtype=torch.int32), persistent=False
@@ -134,14 +135,7 @@ class NystromSumLayer(TorchSumLayer):
     # ------------------------------------------------------------------
     @property
     def weight(self):
-        # debug prints
-        print("U shape (F,Ko,Ki):", self.U.shape)
-        print("V shape (F,H·Ki,Ki):", self.V.shape)
-    
-        # einsum: sum over k, keep o from U and i from V
         w = torch.einsum("fok,fik->foi", self.U, self.V)
-    
-        print("🔧 Computed weight with shape", tuple(w.shape))
         return w
 
     @property
@@ -171,18 +165,71 @@ class NystromSumLayer(TorchSumLayer):
 
     # ------------------------------------------------------------------
     # helper ------------------------------------------------------------
-    def _build_factors_from(self, original_layer: TorchSumLayer) -> None:
-        """Compute Nyström factors from a dense weight matrix using SVD."""
-        with torch.no_grad():
-            W = original_layer.weight()
-            F_, Ko, Ki = W.shape
-            r = self.rank
+    def _build_factors_from(self, original_layer: TorchSumLayer, pivots=None):
+        """Construct Nyström factors without materialising the Kronecker weight.
+
+        Parameters
+        ----------
+        original_layer : TorchSumLayer
+            Layer providing the Kronecker-product weights.
+        pivots : list[tuple[Tensor, Tensor]] | None
+            Optional list of pivot index pairs ``(I, J)`` for each fold.  If not
+            provided, random pivots are chosen as before.
+        """
+        with torch.no_grad():                                   # saves memory
+            # ``original_layer.weight`` encodes the Kronecker product of a
+            # smaller matrix with itself.  Extract that base matrix so we can
+            # compute required sub-blocks without building the full product.
+            if hasattr(original_layer.weight, "_nodes"):
+                base_weight = original_layer.weight._nodes[0]()
+            else:
+                base_weight = original_layer.weight()
+            F_, K_o_base, K_i_base = base_weight.shape
+            K_o = K_o_base * K_o_base
+            K_i = K_i_base * K_i_base
+            s = self.rank                                       # local alias
+
             U_lr, V_lr = [], []
+
             for f in range(F_):
-                M_f = W[f]
-                U, S, Vh = torch.linalg.svd(M_f, full_matrices=False)
-                U_lr.append(U[:, :r] * S[:r].sqrt())
-                V_lr.append((S[:r].sqrt()[None, :] * Vh[:r, :]).T)
-            self.U = nn.Parameter(torch.stack(U_lr, dim=0))
-            self.V = nn.Parameter(torch.stack(V_lr, dim=0))
+                M_f = base_weight[f]
+
+                def kron_block(rows, cols):
+                    r0 = torch.div(rows, K_o_base, rounding_mode='floor')
+                    r1 = rows % K_o_base
+                    c0 = torch.div(cols, K_i_base, rounding_mode='floor')
+                    c1 = cols % K_i_base
+                    return M_f[r0][:, c0] * M_f[r1][:, c1]
+
+                if pivots is not None:
+                    I, J = pivots[f]
+                else:
+                    I = torch.randperm(K_o, device=M_f.device)[:s]
+                    J = torch.randperm(K_i, device=M_f.device)[:s]
+                mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
+                mask_I[I] = False
+                I_c = mask_I.nonzero(as_tuple=False).flatten()
+                mask_J = torch.ones(K_i, dtype=torch.bool, device=M_f.device)
+                mask_J[J] = False
+                J_c = mask_J.nonzero(as_tuple=False).flatten()
+
+                A = kron_block(I, J)
+                U, S, Vh = torch.linalg.svd(A, full_matrices=False)
+
+                L_inv = torch.diag(1.0 / S)
+                F_blk = kron_block(I_c, J)
+                B_blk = kron_block(I, J_c)
+                tilde_U = F_blk @ Vh.T @ L_inv
+                tilde_H = L_inv @ U.T @ B_blk
+
+                C   = torch.cat([A, F_blk], dim=0)
+                R   = torch.cat([A, B_blk], dim=1)
+                A_pinv = torch.linalg.pinv(A)
+
+                U_lr.append(C)
+                V_lr.append((A_pinv @ R).T)
+
+            # Stack over folds and register as parameters (trainable)
+            self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)
+            self.V = nn.Parameter(torch.stack(V_lr, dim=0))     # (F, K_i, s)
 
