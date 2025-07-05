@@ -9,7 +9,7 @@ from cirkit.symbolic.initializers import NormalInitializer, ConstantTensorInitia
 from cirkit.backend.torch.layers.inner import TorchSumLayer
 from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
 from cirkit.backend.torch.rules.layers import DEFAULT_LAYER_COMPILATION_RULES
-from nystromlayer import NystromSumLayer
+from nystromlayer import NystromSumLayer as TorchNystromSumLayer
 import torch
 
 
@@ -18,6 +18,9 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLaye
     U = compiler.compile_parameter(sl.U)
     V = compiler.compile_parameter(sl.V)
 
+    # Initialize the parameters so we can materialize the dense weight
+    U.reset_parameters()
+    V.reset_parameters()
     U_val = U()
     V_val = V()
     weight_val = torch.einsum("fok,fik->foi", U_val, V_val)
@@ -38,7 +41,9 @@ def compile_nystrom_sum_layer(compiler, sl: "NystromSumLayer") -> NystromSumLaye
         weight=weight,
         semiring=compiler.semiring,
     )
-    nys = NystromSumLayer(dense_layer, rank=sl.rank)
+    # Initialize the dense weight so the Nyström layer can compute its factors
+    dense_layer.weight.reset_parameters()
+    nys = TorchNystromSumLayer(dense_layer, rank=sl.rank)
     nys.weight_orig = weight_val.detach()
     return nys
 
