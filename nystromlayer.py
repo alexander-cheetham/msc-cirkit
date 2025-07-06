@@ -106,7 +106,7 @@ class NystromSumLayer(TorchSumLayer):
             num_input_units=original_layer.num_input_units,
             num_output_units=original_layer.num_output_units,
             arity=original_layer.arity,
-            weight=original_layer.weight,     
+            weight=original_layer.weight,
             semiring=original_layer.semiring,
             num_folds=original_layer.num_folds,
         )
@@ -114,6 +114,7 @@ class NystromSumLayer(TorchSumLayer):
         # 1 · Rank bookkeeping
         # ------------------------------------------------------------------
         self.rank = int(rank)
+        self.weight_orig = original_layer.weight()
         # buffer → moves with .to()/ .cuda() but is not trainable
         self.register_buffer(
             "rank_param", torch.tensor(self.rank, dtype=torch.int32), persistent=False
@@ -134,15 +135,17 @@ class NystromSumLayer(TorchSumLayer):
     # ------------------------------------------------------------------
     @property
     def weight(self):
-        # debug prints
-        print("U shape (F,Ko,Ki):", self.U.shape)
-        print("V shape (F,H·Ki,Ki):", self.V.shape)
-    
-        # einsum: sum over k, keep o from U and i from V
         w = torch.einsum("fok,fik->foi", self.U, self.V)
-    
-        print("🔧 Computed weight with shape", tuple(w.shape))
         return w
+
+    @property
+    def params(self):
+        """Expose no trainable parameters to CirKit's reset mechanism."""
+        return {}
+
+    def reset_parameters(self):
+        # Parameters are initialized during construction; nothing to reset
+        pass
 
     # ------------------------------------------------------------------
     # Optional: expose a virtual dense weight for code that still calls
