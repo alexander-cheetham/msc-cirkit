@@ -30,3 +30,17 @@ class BenchmarkConfig:
     powers_of_two: bool = False
     min_exp: Optional[int] = None
     max_exp: Optional[int] = None
+
+
+@dataclass
+class DeepBenchmarkConfig(BenchmarkConfig):
+    """Configuration for deep circuit benchmark runs."""
+
+    num_layers: int = 2
+    num_variables: Optional[int] = None
+
+    def get_num_variables(self) -> int:
+        """Return the number of variables for the region graph."""
+        if self.num_variables is not None:
+            return self.num_variables
+        return 2 ** self.num_layers

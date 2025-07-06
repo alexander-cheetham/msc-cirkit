@@ -6,9 +6,14 @@ import numpy as np
 from typing import Dict, List
 from tqdm import tqdm
 
-from .config import BenchmarkConfig
+from .config import BenchmarkConfig, DeepBenchmarkConfig
 from nystromlayer import NystromSumLayer
-from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
+from .circuit_manip import (
+    build_and_compile_circuit,
+    replace_sum_layers,
+    fix_address_book_modules,
+    compile_deep_circuit,
+)
 from .profilers import WandbMemoryProfiler, FLOPCounter
 from .visualisation import create_wandb_visualisations
 import copy
@@ -356,3 +361,164 @@ class WandbCircuitBenchmark:
         
 
         wandb.log(summary)
+
+
+class WandbDeepCircuitBenchmark(WandbCircuitBenchmark):
+    """Benchmark deep circuits with Nyström layers."""
+
+    def __init__(self, config: DeepBenchmarkConfig):
+        super().__init__(config)
+        self.config: DeepBenchmarkConfig = config
+
+    def create_test_input(self, batch_size: int, input_dim: int, device: str):
+        num_variables = 2 ** self.config.num_layers
+        return torch.randn(batch_size, num_variables, device=device)
+
+    def benchmark_single_configuration(
+        self,
+        n_input: int,
+        n_sum: int,
+        rank: int,
+        batch_size: int,
+        step: int,
+    ) -> Dict:
+        wandb.log({"config/num_layers": self.config.num_layers, "step": step})
+
+        try:
+            original_circuit = compile_deep_circuit(
+                self.config.num_layers,
+                n_input,
+                n_sum,
+                rank=rank,
+                use_nystrom=False,
+            ).to(self.config.device).eval()
+
+            nystrom_circuit = copy.deepcopy(original_circuit)
+            replace_sum_layers(nystrom_circuit, rank=rank)
+            fix_address_book_modules(nystrom_circuit)
+
+            test_input = self.create_test_input(batch_size, n_input, self.config.device)
+
+            orig_times = self.time_forward_pass(
+                original_circuit,
+                test_input,
+                self.config.num_warmup,
+                self.config.num_trials,
+            )
+
+            nystrom_times = self.time_forward_pass(
+                nystrom_circuit,
+                test_input,
+                self.config.num_warmup,
+                self.config.num_trials,
+            )
+
+            wandb.log({
+                "timing/original_mean_ms": orig_times["mean"] * 1000,
+                "timing/nystrom_mean_ms": nystrom_times["mean"] * 1000,
+                "timing/speedup": orig_times["mean"] / nystrom_times["mean"],
+                "step": step,
+            })
+
+            orig_memory = WandbMemoryProfiler.profile_and_log(
+                original_circuit,
+                test_input,
+                device=self.config.device,
+                prefix="memory/original",
+            )
+
+            nystrom_memory = WandbMemoryProfiler.profile_and_log(
+                nystrom_circuit,
+                test_input,
+                device=self.config.device,
+                prefix="memory/nystrom",
+            )
+
+            F = 1
+            orig_flops = FLOPCounter.kronecker_forward(batch_size, F, n_sum, n_input)
+            nystrom_flops = FLOPCounter.nystrom_forward(batch_size, F, n_sum, n_input, rank)
+
+            wandb.log({
+                "flops/original_gflops": orig_flops / 1e9,
+                "flops/nystrom_gflops": nystrom_flops / 1e9,
+                "flops/reduction": 1 - (nystrom_flops / orig_flops),
+                "step": step,
+            })
+
+            with torch.no_grad():
+                orig_output = original_circuit(test_input)
+                nystrom_output = nystrom_circuit(test_input)
+
+                nll_orig = -orig_output
+                nll_nystrom = -nystrom_output
+                nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
+                nll_diff = nll_diff_per_sample.mean()
+
+                p_orig = orig_output.exp()
+                kl_per_sample = p_orig * (orig_output - nystrom_output)
+                kl_div = kl_per_sample.mean()
+
+                wandb.log({
+                    "accuracy/nll_diff": nll_diff.item(),
+                    "accuracy/kl_div": kl_div.item(),
+                    "step": step,
+                })
+
+            speedup = orig_times["mean"] / nystrom_times["mean"]
+            theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
+            memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
+            efficiency = speedup / theoretical_speedup
+
+            self.summary_metrics["speedups"].append(speedup)
+            self.summary_metrics["memory_reductions"].append(memory_reduction)
+            self.summary_metrics["kl_divs"].append(kl_div.item())
+            self.summary_metrics["efficiencies"].append(efficiency)
+
+            self.results_table.add_data(
+                n_input,
+                n_sum,
+                rank,
+                batch_size,
+                self.config.num_layers,
+                orig_times["mean"] * 1000,
+                nystrom_times["mean"] * 1000,
+                speedup,
+                theoretical_speedup,
+                orig_memory,
+                nystrom_memory,
+                memory_reduction,
+                orig_flops / 1e9,
+                nystrom_flops / 1e9,
+                1 - (nystrom_flops / orig_flops),
+                nll_diff.item(),
+                kl_div.item(),
+                efficiency,
+            )
+
+            wandb.log({
+                "efficiency/actual_vs_theoretical": efficiency,
+                "efficiency/memory_reduction": memory_reduction,
+                "efficiency/speedup": speedup,
+                "step": step,
+            })
+
+            return {
+                "n_input": n_input,
+                "n_sum": n_sum,
+                "rank": rank,
+                "batch_size": batch_size,
+                "speedup": speedup,
+                "memory_reduction": memory_reduction,
+                "nll_diff": nll_diff.item(),
+                "kl_div": kl_div.item(),
+                "efficiency": efficiency,
+            }
+
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                wandb.log({"errors/type": "out_of_memory", "step": step})
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None
+            raise
+
