@@ -19,7 +19,7 @@ os.environ.setdefault("WANDB__REQUIRE_LEGACY_SERVICE", "TRUE")  # env override
 import wandb
 wandb.require("legacy-service")       # switch backend → skips wandb-core
             #  ← NEW
-from artificial import crossing_rings_sample
+from src.artificial import crossing_rings_sample
 import matplotlib.pyplot as plt
 
 # ──────────────────────────────────────────────────────────────────────
