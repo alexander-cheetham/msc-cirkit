@@ -1,6 +1,13 @@
 from types import MethodType
 from cirkit.symbolic.circuit import Circuit
-from cirkit.symbolic.layers import GaussianLayer, SumLayer
+from cirkit.symbolic.layers import (
+    GaussianLayer,
+    SumLayer,
+    ProductLayer,
+    Scope,
+)
+from cirkit.templates.utils import Parameterization, parameterization_to_factory
+from symbolic_nystrom import NystromSumLayer as SymbolicNystromSumLayer
 
 def build_circuit_one_sum(
     self,
@@ -78,6 +85,95 @@ def build_and_compile_circuit(input_units: int, sum_units: int):
     # Delete everything except the result
     del net, cc, ctx, symbolic_circuit_partition_func, kronparameter
     return csc
+
+
+def build_deep_symbolic_circuit(
+    num_layers: int,
+    num_input_units: int,
+    num_sum_units: int,
+    *,
+    rank: int,
+    use_nystrom: bool = False,
+) -> Circuit:
+    """Construct a deep symbolic circuit alternating sum and product layers."""
+
+    num_leaves = 2 ** num_layers
+    layers: list = []
+    in_layers: dict = {}
+
+    p = Parameterization(activation="softmax", initialization="normal")
+    weight_factory = parameterization_to_factory(p)
+
+    current = []
+    for i in range(num_leaves):
+        g = GaussianLayer(scope=Scope({i}), num_output_units=num_input_units)
+        layers.append(g)
+        current.append(g)
+
+    for depth in range(num_layers):
+        next_layers = []
+        is_sum = depth % 2 == 0
+        for j in range(0, len(current), 2):
+            ins = current[j : j + 2]
+            if is_sum:
+                out_units = 1 if depth == num_layers - 1 else num_sum_units
+                if use_nystrom:
+                    sl = SymbolicNystromSumLayer(
+                        num_input_units=ins[0].num_output_units,
+                        num_output_units=out_units,
+                        rank=rank,
+                        arity=len(ins),
+                        U_factory=weight_factory,
+                        V_factory=weight_factory,
+                    )
+                else:
+                    sl = SumLayer(
+                        num_input_units=ins[0].num_output_units,
+                        num_output_units=out_units,
+                        arity=len(ins),
+                        weight_factory=weight_factory,
+                    )
+                layers.append(sl)
+                in_layers[sl] = ins
+                next_layers.append(sl)
+            else:
+                pl = ProductLayer(
+                    ins[0].num_output_units,
+                    ins[0].num_output_units,
+                    arity=len(ins),
+                )
+                layers.append(pl)
+                in_layers[pl] = ins
+                next_layers.append(pl)
+        current = next_layers
+
+    return Circuit(layers, in_layers, outputs=current)
+
+
+def compile_deep_circuit(
+    num_layers: int,
+    num_input_units: int,
+    num_sum_units: int,
+    *,
+    rank: int,
+    use_nystrom: bool = False,
+) -> Circuit:
+    """Build and compile a deep circuit to a torch backend."""
+
+    symbolic = build_deep_symbolic_circuit(
+        num_layers,
+        num_input_units,
+        num_sum_units,
+        rank=rank,
+        use_nystrom=use_nystrom,
+    )
+    ctx = PipelineContext(
+        backend="torch",
+        semiring="sum-product",
+        fold=False,
+        optimize=False,
+    )
+    return ctx.compile(symbolic).cpu().eval()
 
 # --- 1. Imports --------------------------------------------------------------
 import torch.nn as nn
