@@ -134,21 +134,29 @@ class TorchCompiler(AbstractCompiler):
         prev = self._flags.get("nystrom", False)
         self._flags["nystrom"] = nystrom
         try:
-            return super().compile(circuit)
+            if self.is_compiled(circuit):
+                return self.get_compiled_circuit(circuit)
+            return self.compile_pipeline(circuit, nystrom=nystrom)
         finally:
             self._flags["nystrom"] = prev
 
-    def compile_pipeline(self, sc: Circuit) -> AbstractTorchCircuit:
+    def compile_pipeline(self, sc: Circuit, *, nystrom: bool = False) -> AbstractTorchCircuit:
         # Compile the circuits following the topological ordering of the pipeline.
         for sci in pipeline_topological_ordering([sc]):
-            # Check if the circuit in the pipeline has already been compiled
             if self.is_compiled(sci):
                 continue
 
-            # Compile the circuit
-            self._compile_circuit(sci)
+            prev_nys = self._flags.get("nystrom", False)
+            prev_opt = self._flags.get("optimize", False)
+            self._flags["nystrom"] = nystrom if sci is sc else False
+            if nystrom and sci is not sc:
+                self._flags["optimize"] = False
+            try:
+                self._compile_circuit(sci)
+            finally:
+                self._flags["nystrom"] = prev_nys
+                self._flags["optimize"] = prev_opt
 
-        # Return the compiled circuit (i.e., the output of the circuit pipeline)
         return self.get_compiled_circuit(sc)
 
     @property
@@ -442,6 +450,8 @@ def _optimize_circuit(
         )
         del cc
         cc = opt_cc
+        if opt_shatter_layers:
+            nystrom = False
 
         # Third optimization step: fuse multiple layers into a single more efficient one
         opt_cc, opt_fuse_layers = _optimize_layers(
@@ -608,6 +618,8 @@ def _match_layer_pattern(
         # Third, attempt to match the patterns specified for its parameters
         lpmatches = {}
         for pname, ppattern in ppatterns[lid].items():
+            if pname not in layer.params:
+                return None
             pgraph = layer.params[pname]
             matches, _ = match_optimization_patterns(
                 pgraph.topological_ordering(),
