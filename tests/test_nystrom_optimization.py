@@ -68,10 +68,10 @@ def test_nystrom_flag_replaces_layers():
     circuit = define_circuit_one_sum(2, 2)
     circuit = SF.multiply(circuit, circuit)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
     )
     from cirkit.pipeline import compile as compile_circuit
-    compiled = compile_circuit(circuit, ctx, nystrom=True).cpu().eval()
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
     x = torch.randn(1, 4)
     out = compiled(x)
     assert out.shape[0] == 1
@@ -87,11 +87,11 @@ def test_nystrom_flag_replaces_layers():
 def test_nystrom_no_match_raises():
     circuit = define_circuit_one_sum(2, 2)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
     )
     from cirkit.pipeline import compile as compile_circuit
     with pytest.raises(ValueError):
-        compile_circuit(circuit, ctx, nystrom=True)
+        compile_circuit(circuit, ctx)
 
 
 def test_flag_off_leaves_layers():

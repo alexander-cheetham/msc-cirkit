@@ -27,7 +27,7 @@ class PipelineContext(AbstractContextManager):
     can be added to the context.
     """
 
-    def __init__(self, backend: str = "torch", **backend_kwargs):
+    def __init__(self, backend: str = "torch", nystrom: bool = False, **backend_kwargs):
         """Initialzes a pipeline context, given the compilation backend and
             the compilation flags.
 
@@ -42,13 +42,16 @@ class PipelineContext(AbstractContextManager):
             raise NotImplementedError(f"Backend '{backend}' is not implemented")
         # Backend specs
         self._backend = backend
+        backend_kwargs.setdefault("nystrom", nystrom)
         self._backend_kwargs = backend_kwargs
 
         # Symbolic operator registry
         self._op_registry = OperatorRegistry.from_default_rules()
 
         # Get the compiler, which is backend-dependent
-        self._compiler = retrieve_compiler(backend, **backend_kwargs)
+        self._compiler = retrieve_compiler(
+            backend, **{k: v for k, v in backend_kwargs.items() if k != "nystrom"}
+        )
 
         # The token used to restore the pipeline context
         self._token: Token[PipelineContext] | None = None
@@ -130,7 +133,7 @@ class PipelineContext(AbstractContextManager):
         """
         self._compiler.add_initializer_rule(func)
 
-    def compile(self, sc: Circuit, nystrom: bool = False) -> CompiledCircuit:
+    def compile(self, sc: Circuit, nystrom: bool | None = None) -> CompiledCircuit:
         """Compile a symbolic circuit.
 
         Args:
@@ -139,6 +142,8 @@ class PipelineContext(AbstractContextManager):
         Returns:
             A compiled circuit, whose type depends on the chosen compilation backend.
         """
+        if nystrom is None:
+            nystrom = self._backend_kwargs.get("nystrom", False)
         return self._compiler.compile(sc, nystrom=nystrom)
 
     def is_compiled(self, sc: Circuit) -> bool:
@@ -293,7 +298,7 @@ class PipelineContext(AbstractContextManager):
         return self.compile(conj_sc)
 
 
-def compile(sc: Circuit, ctx: PipelineContext | None = None, *, nystrom: bool = False) -> CompiledCircuit:
+def compile(sc: Circuit, ctx: PipelineContext | None = None, *, nystrom: bool | None = None) -> CompiledCircuit:
     if ctx is None:
         ctx = _PIPELINE_CONTEXT.get()
     return ctx.compile(sc, nystrom=nystrom)

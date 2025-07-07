@@ -1,4 +1,6 @@
 from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+import sys
 
 from cirkit.backend.torch.layers import (
     TorchHadamardLayer,
@@ -7,7 +9,11 @@ from cirkit.backend.torch.layers import (
     TorchSumLayer,
     TorchTuckerLayer,
 )
-from nystromlayer import NystromSumLayer
+try:  # allow running tests without installing this repo as a package
+    from nystromlayer import NystromSumLayer
+except ModuleNotFoundError:  # pragma: no cover - fallback for test runner
+    sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
+    from nystromlayer import NystromSumLayer
 from cirkit.backend.torch.layers.optimized import TorchCPTLayer, TorchTensorDotLayer
 from cirkit.backend.torch.optimization.parameters import KroneckerOutParameterPattern
 from cirkit.backend.torch.optimization.registry import (
@@ -78,7 +84,7 @@ class DenseKroneckerPattern(LayerOptPattern):
 
 
 class NystromPattern(LayerOptPattern):
-    """Matches two-layer multiplies suitable for Nystrom approximation."""
+    """Matches a dense Sum layer with Kronecker-structured weight."""
 
     @classmethod
     def is_output(cls) -> bool:
@@ -86,15 +92,15 @@ class NystromPattern(LayerOptPattern):
 
     @classmethod
     def entries(cls) -> list[type[TorchLayer]]:
-        return [TorchSumLayer, TorchSumLayer]
+        return [TorchSumLayer]
 
     @classmethod
     def ppatterns(cls) -> list[dict[str, ParameterOptPattern]]:
-        return [{} for _ in cls.entries()]
+        return [{"weight": KroneckerOutParameterPattern}]
 
     @classmethod
     def cpatterns(cls) -> list[dict[str, Any]]:
-        return [{"arity": 1}, {"arity": 1}]
+        return [{"arity": 1}]
 
     @classmethod
     def match(cls, ctx, layer) -> bool:
@@ -210,7 +216,7 @@ DEFAULT_LAYER_FUSE_OPT_RULES: dict[LayerOptPattern, LayerOptApplyFunc] = {  # ty
     CandecompPattern: apply_candecomp,
 }
 DEFAULT_LAYER_SHATTER_OPT_RULES: dict[LayerOptPattern, LayerOptApplyFunc] = {  # type: ignore[misc]
+    NystromPattern: apply_nystrom_sum,
     DenseKroneckerPattern: apply_dense_tensordot,
     TensorDotKroneckerPattern: apply_tensordot_tensordot,
-    NystromPattern: apply_nystrom_sum,
 }

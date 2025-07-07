@@ -520,7 +520,9 @@ def _optimize_layers(
 
     registry = compiler.retrieve_optimization_registry("layer_shatter" if shatter else "layer_fuse")
     patterns = registry.signatures
-    if not nystrom:
+    if nystrom and shatter:
+        patterns = [NystromPattern]
+    elif not nystrom:
         patterns = [p for p in patterns if p is not NystromPattern]
 
     match_optimizer = match_optimizer_shatter if shatter else match_optimizer_fuse
