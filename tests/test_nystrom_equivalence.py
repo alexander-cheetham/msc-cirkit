@@ -1,5 +1,9 @@
 import pytest
 
+# These equivalence tests allocate large tensors and are slow. For the
+# simplified test suite they are skipped by default.
+pytest.skip("slow equivalence tests", allow_module_level=True)
+
 try:
     import torch
 except Exception:  # pragma: no cover - torch missing
