@@ -451,6 +451,11 @@ def _optimize_circuit(
         del cc
         cc = opt_cc
         if opt_shatter_layers:
+            # If we just replaced layers via the Nyström rule, avoid further
+            # optimizations in this iteration as fused patterns may not handle
+            # the new layer types.
+            if nystrom:
+                optimizing = False
             nystrom = False
 
         # Third optimization step: fuse multiple layers into a single more efficient one

@@ -64,6 +64,22 @@ def define_circuit_one_sum(num_input_units=2, num_sum_units=2):
     )
 
 
+def define_deep_cp_circuit(num_input_units=2, num_sum_units=2):
+    rg = RandomBinaryTree(4, seed=0)
+    input_factory = lambda scope, n: GaussianLayer(scope=scope, num_output_units=n)
+    p = Parameterization(activation="softmax", initialization="normal")
+    sum_param_factory = parameterization_to_factory(p)
+    circuit = rg.build_circuit(
+        input_factory=input_factory,
+        sum_product="cp",
+        sum_weight_factory=sum_param_factory,
+        num_input_units=num_input_units,
+        num_sum_units=num_sum_units,
+        num_classes=1,
+    )
+    return SF.multiply(circuit, circuit)
+
+
 def test_nystrom_flag_replaces_layers():
     circuit = define_circuit_one_sum(2, 2)
     circuit = SF.multiply(circuit, circuit)
@@ -103,3 +119,13 @@ def test_flag_off_leaves_layers():
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx, nystrom=False).cpu().eval()
     assert not any(isinstance(m, NystromSumLayer) for m in compiled.modules())
+
+
+def test_nystrom_deep_network():
+    circuit = define_deep_cp_circuit(2, 2)
+    ctx = PipelineContext(
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+    )
+    from cirkit.pipeline import compile as compile_circuit
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
+    assert sum(isinstance(m, NystromSumLayer) for m in compiled.modules()) > 0
