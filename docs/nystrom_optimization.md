@@ -16,6 +16,9 @@ This repository extends the default CirKit torch backend with a new layer shatte
 - **`_post_process_circuit`** forwards the flag to `_optimize_circuit` so the optimizer knows whether to include the Nyström rule.
 - **`_optimize_circuit`** disables the flag after the shatter step if the rule matched once, preventing repeated replacement passes.
 - **`_optimize_layers`** accepts the flag and filters the pattern list accordingly. When `nystrom` is true and the shatter pass finds no matches, a `ValueError` is raised which allows tests to assert failure conditions.
+- When the Nyström flag is enabled the optimizer skips other layer and parameter
+  rules until after the replacement, avoiding interference from additional
+  optimisations.
 
 These changes are wired through `PipelineContext.compile` and the module level `compile` helper so callers simply pass `nystrom=True` when desired.
 

@@ -439,12 +439,15 @@ def _optimize_circuit(
     optimizing = True
     opt_step = 0
     while optimizing and opt_step < max_opt_steps:
-        # First optimization step: optimize the parameters node of the parameter graphs of each layer
-        opt_cc, opt_fuse_parameter_nodes = _optimize_parameter_nodes(compiler, cc)
-        del cc
-        cc = opt_cc
+        # Parameter optimizations are skipped while the Nyström rule is active
+        if not nystrom:
+            opt_cc, opt_fuse_parameter_nodes = _optimize_parameter_nodes(compiler, cc)
+            del cc
+            cc = opt_cc
+        else:
+            opt_fuse_parameter_nodes = False
 
-        # Second optimization step: shatter layers in multiple more efficient ones
+        # Shatter step: this is where the Nyström replacement may occur
         opt_cc, opt_shatter_layers = _optimize_layers(
             compiler, cc, shatter=True, nystrom=nystrom
         )
@@ -459,11 +462,14 @@ def _optimize_circuit(
             nystrom = False
 
         # Third optimization step: fuse multiple layers into a single more efficient one
-        opt_cc, opt_fuse_layers = _optimize_layers(
-            compiler, cc, shatter=False, nystrom=nystrom
-        )
-        del cc
-        cc = opt_cc
+        if not nystrom:
+            opt_cc, opt_fuse_layers = _optimize_layers(
+                compiler, cc, shatter=False, nystrom=nystrom
+            )
+            del cc
+            cc = opt_cc
+        else:
+            opt_fuse_layers = False
 
         # Update the optimization step and whether we should continue optimizing
         optimizing = opt_fuse_parameter_nodes or opt_shatter_layers or opt_fuse_layers
