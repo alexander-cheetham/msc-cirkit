@@ -1,9 +1,5 @@
 import pytest
 
-# These equivalence tests allocate large tensors and are slow. For the
-# simplified test suite they are skipped by default.
-pytest.skip("slow equivalence tests", allow_module_level=True)
-
 try:
     import torch
 except Exception:  # pragma: no cover - torch missing
@@ -50,7 +46,7 @@ def dense_nystrom(W: torch.Tensor, rank: int, pivots):
 def test_new_matches_old():
     torch.cuda.empty_cache()
     torch.manual_seed(0)
-    F, Ko_base, Ki_base = 9, 80, 80
+    F, Ko_base, Ki_base = 2, 10, 10
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
@@ -99,7 +95,7 @@ def test_new_faster_than_old():
     torch.cuda.empty_cache()
     torch.manual_seed(0)
 
-    F, Ko_base, Ki_base = 9, 80, 80
+    F, Ko_base, Ki_base = 2, 10, 10
     base = torch.randn(F, Ko_base, Ki_base, device=device)
 
     kron = torch.stack([torch.kron(base[f], base[f]) for f in range(F)], dim=0)
