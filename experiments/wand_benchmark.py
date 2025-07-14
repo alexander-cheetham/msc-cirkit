@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wandb
 from src.config import BenchmarkConfig
 from src.benchmarks import WandbCircuitBenchmark
+import helpers
 
 def main():
     """Run benchmark with wandb tracking."""
@@ -86,7 +87,12 @@ def main():
         )
     
     print(f"Starting wandb experiment on {config.device}")
-    benchmark = WandbCircuitBenchmark(config)
+    # Build the symbolic circuit once. It will be squared and compiled inside
+    # the benchmark for each configuration.
+    symbolic_circuit = helpers.define_circuit_one_sum(
+        config.input_units[0], config.sum_units[0]
+    )
+    benchmark = WandbCircuitBenchmark(config, symbolic_circuit)
     results = benchmark.run_full_benchmark()
     
     # Save artifacts
