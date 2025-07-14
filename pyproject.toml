@@ -1,5 +1,5 @@
 [project]
-name = "cirkit"
+name = "nystrom-cirkit"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -7,11 +7,11 @@ requires-python = "~=3.10"
 dependencies = [
     "wandb>=0.17",
     "jupyter>=1.1.1",
-    "libcirkit>=0.2.1",
     "matplotlib>=3.10.1",
     "torch>=2.6.0",
     "torchvision>=0.21.0",
     "tqdm>=4.67.1",
+    "libcirkit", 
 ]
 [tool.setuptools.packages.find]
 where = ["src"]  # or ["."]
@@ -20,9 +20,13 @@ where = ["src"]  # or ["."]
 package-dir = {"" = "src"}
 py-modules = ["nystromlayer"]
 
+
+[tool.uv.sources]
+libcirkit = { workspace = true }  # ← serve cirkit from the workspace
+
+[tool.uv.workspace]
+members = ["cirkit"]     # ← include the inner folder as a workspace member
+
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
 graphviz = ["pygraphviz"]
-
-[tool.poetry]
-packages = [{ include = "cirkit", from = "src" }]

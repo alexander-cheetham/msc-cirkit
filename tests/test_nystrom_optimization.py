@@ -111,7 +111,7 @@ def test_flag_off_leaves_layers():
     assert not any(isinstance(m, NystromSumLayer) for m in compiled.modules())
 
 
-@pytest.mark.xfail(reason="upstream incompatibility")
+
 def test_nystrom_deep_network():
     circuit = define_deep_cp_circuit(2, 2)
     ctx = PipelineContext(
