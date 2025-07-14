@@ -2,6 +2,9 @@ from types import MethodType
 from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
 
+# Legacy utilities ``replace_sum_layers`` and ``fix_address_book_modules`` have
+# been moved to :mod:`legacy.circuit_manip`.
+
 def build_circuit_one_sum(
     self,
     *,
@@ -47,7 +50,7 @@ from cirkit.symbolic.io import plot_circuit
 from cirkit.pipeline import PipelineContext
 from helpers import define_circuit_one_sum
 
-def build_and_compile_circuit(input_units: int, sum_units: int):
+def build_and_compile_circuit(input_units: int, sum_units: int, *, nystrom: bool = False):
     """
     Build a one‐sum circuit with the given number of input and sum units,
     compile it in a sum‐product semiring, and return only the compiled circuit.
@@ -61,7 +64,8 @@ def build_and_compile_circuit(input_units: int, sum_units: int):
         backend="torch",
         semiring="sum-product",
         fold=False,
-        optimize=False
+        optimize=False,
+        nystrom=nystrom,
     )
     cc = ctx.compile(net).cpu().eval()
 
@@ -78,65 +82,3 @@ def build_and_compile_circuit(input_units: int, sum_units: int):
     # Delete everything except the result
     del net, cc, ctx, symbolic_circuit_partition_func, kronparameter
     return csc
-
-# --- 1. Imports --------------------------------------------------------------
-import torch.nn as nn
-from cirkit.backend.torch.layers.inner import TorchSumLayer        # the baseline
-from nystromlayer import NystromSumLayer                           # your wrapper
-
-# --- 2. Recursive graph-walk -------------------------------------------------
-def replace_sum_layers(module: nn.Module, *, rank: int) -> None:
-    """
-    Walk `module` and in-place replace every TorchSumLayer with NystromSumLayer
-    of the same weight but compressed to the given Nyström rank.
-
-    Parameters
-    ----------
-    module : nn.Module         # csc, or any sub-module
-    rank   : int               # target Nyström rank `s`
-    """
-    for name, child in list(module.named_children()):             
-        if isinstance(child, TorchSumLayer):
-            # swap in-place 
-            setattr(module, name, NystromSumLayer(child, rank=rank))
-        else:
-            # descend the tree 
-            replace_sum_layers(module=child, rank=rank)
-
-def fix_address_book_modules(circuit, verbose=False) -> bool:
-    """Replace old TorchSumLayer with NystromSumLayer in address book"""
-    if not hasattr(circuit, '_address_book'):
-        return False
-
-    addr_book = circuit._address_book
-
-    # Find the NystromSumLayer in the circuit
-    nystrom_layer = None
-    for name, module in circuit.named_modules():
-        if isinstance(module, NystromSumLayer):
-            nystrom_layer = module
-            if verbose:
-                print(f"Found NystromSumLayer at: {name}")
-            break
-
-    if nystrom_layer is None:
-        if verbose:
-            print("ERROR: No NystromSumLayer found in circuit!")
-        return False
-
-    # Update _entry_modules
-    if hasattr(addr_book, '_entry_modules'):
-        for i, module in enumerate(addr_book._entry_modules):
-            if verbose:
-                print(f"Entry {i}: {type(module).__name__ if module else 'None'}")
-
-            if isinstance(module, TorchSumLayer) and not isinstance(module, NystromSumLayer):
-                addr_book._entry_modules[i] = nystrom_layer
-
-                # Verify the update
-                if verbose:
-                    print(f"  After update: {type(addr_book._entry_modules[i]).__name__}")
-                    print(f"  Is NystromSumLayer? {isinstance(addr_book._entry_modules[i], NystromSumLayer)}")
-                return True
-
-    return False

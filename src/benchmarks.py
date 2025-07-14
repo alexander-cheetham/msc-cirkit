@@ -7,11 +7,9 @@ from typing import Dict, List
 from tqdm import tqdm
 
 from .config import BenchmarkConfig
-from nystromlayer import NystromSumLayer
-from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
+from .circuit_manip import build_and_compile_circuit
 from .profilers import WandbMemoryProfiler, FLOPCounter
 from .visualisation import create_wandb_visualisations
-import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
 import wandb
@@ -131,9 +129,10 @@ class WandbCircuitBenchmark:
             original_circuit = build_and_compile_circuit(n_input, n_sum)
             original_circuit = original_circuit.to(self.config.device).eval()
 
-            nystrom_circuit = copy.deepcopy(original_circuit)
-            replace_sum_layers(nystrom_circuit, rank=rank)
-            fix_address_book_modules(nystrom_circuit)
+            nystrom_circuit = build_and_compile_circuit(
+                n_input, n_sum, nystrom=True
+            )
+            nystrom_circuit = nystrom_circuit.to(self.config.device).eval()
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
