@@ -26,9 +26,8 @@ def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
         semiring="sum-product",
         fold=False,
         optimize=True,
-        nystrom=nystrom,
     )
-    compiled = compile_circuit(circuit, ctx).to(device).eval()
+    compiled = compile_circuit(circuit, ctx, nystrom=nystrom).to(device).eval()
     return compiled
 
 
