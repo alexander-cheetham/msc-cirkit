@@ -1,15 +1,5 @@
 import pytest
-import sys
-from pathlib import Path
-import importlib
-
-src_path = str(Path(__file__).resolve().parents[1] / "src")
-sys.path.insert(0, src_path)
-for m in list(sys.modules.keys()):
-    if m.startswith("cirkit"):
-        del sys.modules[m]
 import cirkit.pipeline as _cp
-importlib.reload(_cp)
 from cirkit.pipeline import PipelineContext
 
 try:
@@ -119,6 +109,7 @@ def test_flag_off_leaves_layers():
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx, nystrom=False).cpu().eval()
     assert not any(isinstance(m, NystromSumLayer) for m in compiled.modules())
+
 
 
 def test_nystrom_deep_network():
