@@ -47,14 +47,14 @@ class WandbCircuitBenchmark:
             "orig_time_ms", "nystrom_time_ms", "speedup", "theoretical_speedup",
             "orig_memory_mb", "nystrom_memory_mb", "memory_reduction",
             "orig_gflops", "nystrom_gflops", "flop_reduction",
-            "nll_diff", "kl_div", "efficiency"
+            "nll_diff", "efficiency"
         ])
         
         # Summary metrics
         self.summary_metrics = {
             "speedups": [],
             "memory_reductions": [],
-            "kl_divs": [],
+            "nll_diffs": [],
             "efficiencies": []
         }
     
@@ -199,17 +199,10 @@ class WandbCircuitBenchmark:
                 nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
                 nll_diff = nll_diff_per_sample.mean()
 
-
-                p_orig = orig_output.exp()
-                kl_per_sample = p_orig * (orig_output - nystrom_output)
-                kl_div = kl_per_sample.mean()
-
                 wandb.log({
                     "accuracy/nll_diff": nll_diff.item(),
-                    "accuracy/kl_div": kl_div.item(),
                     "accuracy/nll_diff_std": nll_diff_per_sample.std().item(),
-                    "accuracy/kl_std": kl_per_sample.std().item(),
-                    "accuracy/kl_max": kl_per_sample.max().item(),
+                    "accuracy/nll_max": nll_diff_per_sample.max().item(),
                     "step": step
                 })
             
@@ -222,7 +215,7 @@ class WandbCircuitBenchmark:
             # Update summary metrics
             self.summary_metrics["speedups"].append(speedup)
             self.summary_metrics["memory_reductions"].append(memory_reduction)
-            self.summary_metrics["kl_divs"].append(kl_div.item())
+            self.summary_metrics["nll_diffs"].append(nll_diff.item())
             self.summary_metrics["efficiencies"].append(efficiency)
             
             # Add row to results table
@@ -232,7 +225,7 @@ class WandbCircuitBenchmark:
                 speedup, theoretical_speedup,
                 orig_memory, nystrom_memory, memory_reduction,
                 orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-                nll_diff.item(), kl_div.item(), efficiency
+                nll_diff.item(), efficiency
             )
             
             # Log efficiency metrics
@@ -250,7 +243,6 @@ class WandbCircuitBenchmark:
                 'speedup': speedup,
                 'memory_reduction': memory_reduction,
                 'nll_diff': nll_diff.item(),
-                'kl_div': kl_div.item(),
                 'efficiency': efficiency
             }
 
@@ -340,19 +332,19 @@ class WandbCircuitBenchmark:
             "summary/max_speedup": np.max(self.summary_metrics["speedups"]),
             "summary/min_speedup": np.min(self.summary_metrics["speedups"]),
             "summary/avg_memory_reduction": np.mean(self.summary_metrics["memory_reductions"]),
-            "summary/avg_kl_div": np.mean(self.summary_metrics["kl_divs"]),
+            "summary/avg_nll_diff": np.mean(self.summary_metrics["nll_diffs"]),
             "summary/avg_efficiency": np.mean(self.summary_metrics["efficiencies"]),
         }
         
         # Find best configurations
         speedups = np.array(self.summary_metrics["speedups"])
-        errors = np.array(self.summary_metrics["kl_divs"])
-        
-        # Best speedup with KL divergence < 1e-2
+        errors = np.array(self.summary_metrics["nll_diffs"])
+
+        # Best speedup with NLL difference < 1e-2
         good_accuracy_mask = errors < 0.01
         if good_accuracy_mask.any():
             best_speedup_good_accuracy = speedups[good_accuracy_mask].max()
-            summary["summary/best_speedup_low_kl"] = best_speedup_good_accuracy
+            summary["summary/best_speedup_low_nll"] = best_speedup_good_accuracy
         
 
         wandb.log(summary)
