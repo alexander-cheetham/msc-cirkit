@@ -12,15 +12,14 @@ else:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 try:  # pragma: no cover - optional dependency
-    from nystromlayer import NystromSumLayer
     from src.circuit_manip import build_and_compile_circuit
 except Exception:
-    NystromSumLayer = None
+    build_and_compile_circuit = None
 
 def quick_test():
     """Quick test to verify everything works."""
 
-    if torch is None or NystromSumLayer is None:
+    if torch is None or build_and_compile_circuit is None:
         print("cirkit library not installed; skipping quick test")
         return
 
@@ -34,10 +33,9 @@ def quick_test():
     print("Building original circuit...")
     orig = build_and_compile_circuit(n_input, n_sum)
     orig = orig.to(DEVICE)
-    
+
     print("Building Nyström circuit...")
-    nys = build_and_compile_circuit(n_input, n_sum)
-    nys.layers[1] = NystromSumLayer(nys.layers[1], rank)
+    nys = build_and_compile_circuit(n_input, n_sum, nystrom=True)
     nys = nys.to(DEVICE)
     
     # Test

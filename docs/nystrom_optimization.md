@@ -31,3 +31,12 @@ These changes are wired through `PipelineContext.compile` and the module level `
 3. **Flag off** – compiling the squared circuit with `nystrom=False` leaves the graph unchanged and no Nyström layers are produced.
 
 Since the new rule is inserted alongside existing ones but only activated via the flag, standard compilation and other optimization rules continue to behave exactly as before.
+
+## Circuit builders
+
+Utilities for constructing example circuits live in :mod:`src.circuit_types`. The
+function :func:`make_random_binary_tree_circuit` accepts a ``depth`` argument and
+optionally ``num_input_units`` and ``num_sum_units``. ``depth=1`` recreates the
+shallow one-sum circuit used throughout the tests while larger values build
+deeper CP structures. A small stub ``make_mnist_circuit`` is also provided for
+future dataset-specific experiments.

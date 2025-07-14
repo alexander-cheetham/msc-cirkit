@@ -7,23 +7,66 @@ from typing import Dict, List
 from tqdm import tqdm
 
 from .config import BenchmarkConfig
-from nystromlayer import NystromSumLayer
-from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
 from .profilers import WandbMemoryProfiler, FLOPCounter
 from .visualisation import create_wandb_visualisations
-import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
 import wandb
-wandb.require("legacy-service")    
+
+import sys
+from pathlib import Path
+import importlib
+
+src_path = str(Path(__file__).resolve().parents[1] / "src")
+sys.path.insert(0, src_path)
+for m in list(sys.modules.keys()):
+    if m.startswith("cirkit"):
+        del sys.modules[m]
+import cirkit.pipeline as _cp
+importlib.reload(_cp)
+from cirkit.pipeline import PipelineContext, compile as compile_circuit
+from cirkit.symbolic.circuit import Circuit
+import cirkit.symbolic.functional as SF
+from .circuit_types import CIRCUIT_BUILDERS, make_random_binary_tree_circuit
+wandb.require("legacy-service")
+
+
+def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
+    """Compile a symbolic circuit with optional Nyström optimization."""
+    ctx = PipelineContext(
+        backend="torch",
+        semiring="sum-product",
+        fold=False,
+        optimize=True,
+        nystrom=nystrom,
+    )
+    compiled = compile_circuit(circuit, ctx).to(device).eval()
+    return compiled
 
 
 
 class WandbCircuitBenchmark:
-    """Benchmark suite with wandb integration"""
-    
+    """Benchmark suite with wandb integration.
+
+    Parameters
+    ----------
+    config : BenchmarkConfig
+        Benchmark configuration.
+    """
+
     def __init__(self, config: BenchmarkConfig):
         self.config = config
+        builder = CIRCUIT_BUILDERS.get(config.circuit_structure, make_random_binary_tree_circuit)
+        build_kwargs = {}
+        if config.circuit_structure in {"one_sum", "deep_cp_circuit"}:
+            depth = 1 if config.circuit_structure == "one_sum" else config.depth
+            build_kwargs["depth"] = depth
+        if config.num_input_units is not None:
+            build_kwargs["num_input_units"] = config.num_input_units
+        if config.num_sum_units is not None:
+            build_kwargs["num_sum_units"] = config.num_sum_units
+
+        self.base_symbolic_circuit = builder(**build_kwargs)
         
         # Initialize wandb run
         self.run = wandb.init(
@@ -127,16 +170,17 @@ class WandbCircuitBenchmark:
         })
         
         try:
-            # Build circuits
-            original_circuit = build_and_compile_circuit(n_input, n_sum)
-            original_circuit = original_circuit.to(self.config.device).eval()
 
-            nystrom_circuit = copy.deepcopy(original_circuit)
-            replace_sum_layers(nystrom_circuit, rank=rank)
-            fix_address_book_modules(nystrom_circuit)
+            # Build symbolic circuit and its squared version
+            symbolic = self.base_symbolic_circuit
+            symbolic = SF.multiply(symbolic, symbolic)
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
+
+            # Compile baseline and Nyström versions
+            original_circuit = compile_symbolic(symbolic, nystrom=False, device=self.config.device)
+            nystrom_circuit = compile_symbolic(symbolic, nystrom=True, device=self.config.device)
 
             # Time forward passes
             orig_times = self.time_forward_pass(
