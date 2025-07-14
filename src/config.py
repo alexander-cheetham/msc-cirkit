@@ -30,3 +30,9 @@ class BenchmarkConfig:
     powers_of_two: bool = False
     min_exp: Optional[int] = None
     max_exp: Optional[int] = None
+
+    # Circuit structure
+    circuit_structure: str = "one_sum"
+    depth: int = 1
+    num_input_units: Optional[int] = None
+    num_sum_units: Optional[int] = None

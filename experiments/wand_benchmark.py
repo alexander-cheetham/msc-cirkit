@@ -9,7 +9,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wandb
 from src.config import BenchmarkConfig
 from src.benchmarks import WandbCircuitBenchmark
-import helpers
 
 def main():
     """Run benchmark with wandb tracking."""
@@ -31,6 +30,30 @@ def main():
         type=int,
         default=9,
         help="Maximum exponent for powers of two (2**max_exp)",
+    )
+    parser.add_argument(
+        "--circuit-structure",
+        choices=["one_sum", "deep_cp_circuit", "MNIST"],
+        default="one_sum",
+        help="Type of circuit to benchmark",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        help="Depth for deep_cp_circuit",
+    )
+    parser.add_argument(
+        "--num-input-units",
+        type=int,
+        default=None,
+        help="Optional number of input units for circuit builder",
+    )
+    parser.add_argument(
+        "--num-sum-units",
+        type=int,
+        default=None,
+        help="Optional number of sum units for circuit builder",
     )
 
     args = parser.parse_args()
@@ -72,6 +95,10 @@ def main():
             powers_of_two=True,
             min_exp=args.min_exp,
             max_exp=args.max_exp,
+            circuit_structure=args.circuit_structure,
+            depth=args.depth,
+            num_input_units=args.num_input_units,
+            num_sum_units=args.num_sum_units,
         )
     else:
         config = BenchmarkConfig(
@@ -84,15 +111,14 @@ def main():
             powers_of_two=False,
             min_exp=None,
             max_exp=None,
+            circuit_structure=args.circuit_structure,
+            depth=args.depth,
+            num_input_units=args.num_input_units,
+            num_sum_units=args.num_sum_units,
         )
     
     print(f"Starting wandb experiment on {config.device}")
-    # Build the symbolic circuit once. It will be squared and compiled inside
-    # the benchmark for each configuration.
-    symbolic_circuit = helpers.define_circuit_one_sum(
-        config.input_units[0], config.sum_units[0]
-    )
-    benchmark = WandbCircuitBenchmark(config, symbolic_circuit)
+    benchmark = WandbCircuitBenchmark(config)
     results = benchmark.run_full_benchmark()
     
     # Save artifacts

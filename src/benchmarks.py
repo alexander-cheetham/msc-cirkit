@@ -15,6 +15,7 @@ import wandb
 from cirkit.pipeline import PipelineContext, compile as compile_circuit
 from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
+from .circuit_types import CIRCUIT_BUILDERS, make_random_binary_tree_circuit
 wandb.require("legacy-service")
 
 
@@ -39,17 +40,21 @@ class WandbCircuitBenchmark:
     ----------
     config : BenchmarkConfig
         Benchmark configuration.
-    base_symbolic_circuit : Circuit
-        The symbolic circuit to benchmark **before squaring**. It will be
-        multiplied with itself and then compiled for both the baseline and
-        Nyström variants during benchmarking.
     """
 
-    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: Circuit):
+    def __init__(self, config: BenchmarkConfig):
         self.config = config
-        # Store the symbolic circuit before squaring so we can compile fresh
-        # copies for each configuration.
-        self.base_symbolic_circuit = base_symbolic_circuit
+        builder = CIRCUIT_BUILDERS.get(config.circuit_structure, make_random_binary_tree_circuit)
+        build_kwargs = {}
+        if config.circuit_structure in {"one_sum", "deep_cp_circuit"}:
+            depth = 1 if config.circuit_structure == "one_sum" else config.depth
+            build_kwargs["depth"] = depth
+        if config.num_input_units is not None:
+            build_kwargs["num_input_units"] = config.num_input_units
+        if config.num_sum_units is not None:
+            build_kwargs["num_sum_units"] = config.num_sum_units
+
+        self.base_symbolic_circuit = builder(**build_kwargs)
         
         # Initialize wandb run
         self.run = wandb.init(
@@ -157,6 +162,9 @@ class WandbCircuitBenchmark:
             # Build symbolic circuit and its squared version
             symbolic = self.base_symbolic_circuit
             symbolic = SF.multiply(symbolic, symbolic)
+
+            # Create test input
+            test_input = self.create_test_input(batch_size, n_input, self.config.device)
 
             # Compile baseline and Nyström versions
             original_circuit = compile_symbolic(symbolic, nystrom=False, device=self.config.device)
