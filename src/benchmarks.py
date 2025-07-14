@@ -7,23 +7,49 @@ from typing import Dict, List
 from tqdm import tqdm
 
 from .config import BenchmarkConfig
-from nystromlayer import NystromSumLayer
-from .circuit_manip import build_and_compile_circuit,replace_sum_layers, fix_address_book_modules
 from .profilers import WandbMemoryProfiler, FLOPCounter
 from .visualisation import create_wandb_visualisations
-import copy
 from dataclasses import asdict
 import matplotlib.pyplot as plt
 import wandb
-wandb.require("legacy-service")    
+from cirkit.pipeline import PipelineContext, compile as compile_circuit
+from cirkit.symbolic.circuit import Circuit
+import cirkit.symbolic.functional as SF
+wandb.require("legacy-service")
+
+
+def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
+    """Compile a symbolic circuit with optional Nyström optimization."""
+    ctx = PipelineContext(
+        backend="torch",
+        semiring="sum-product",
+        fold=False,
+        optimize=True,
+        nystrom=nystrom,
+    )
+    compiled = compile_circuit(circuit, ctx).to(device).eval()
+    return compiled
 
 
 
 class WandbCircuitBenchmark:
-    """Benchmark suite with wandb integration"""
-    
-    def __init__(self, config: BenchmarkConfig):
+    """Benchmark suite with wandb integration.
+
+    Parameters
+    ----------
+    config : BenchmarkConfig
+        Benchmark configuration.
+    base_symbolic_circuit : Circuit
+        The symbolic circuit to benchmark **before squaring**. It will be
+        multiplied with itself and then compiled for both the baseline and
+        Nyström variants during benchmarking.
+    """
+
+    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: Circuit):
         self.config = config
+        # Store the symbolic circuit before squaring so we can compile fresh
+        # copies for each configuration.
+        self.base_symbolic_circuit = base_symbolic_circuit
         
         # Initialize wandb run
         self.run = wandb.init(
@@ -127,13 +153,13 @@ class WandbCircuitBenchmark:
         })
         
         try:
-            # Build circuits
-            original_circuit = build_and_compile_circuit(n_input, n_sum)
-            original_circuit = original_circuit.to(self.config.device).eval()
+            # Build symbolic circuit and its squared version
+            symbolic = self.base_symbolic_circuit
+            symbolic = SF.multiply(symbolic, symbolic)
 
-            nystrom_circuit = copy.deepcopy(original_circuit)
-            replace_sum_layers(nystrom_circuit, rank=rank)
-            fix_address_book_modules(nystrom_circuit)
+            # Compile baseline and Nyström versions
+            original_circuit = compile_symbolic(symbolic, nystrom=False, device=self.config.device)
+            nystrom_circuit = compile_symbolic(symbolic, nystrom=True, device=self.config.device)
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
