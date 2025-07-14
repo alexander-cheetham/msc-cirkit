@@ -30,3 +30,11 @@ class BenchmarkConfig:
     powers_of_two: bool = False
     min_exp: Optional[int] = None
     max_exp: Optional[int] = None
+    circuit_structure: str = field(
+        default="one_sum",
+        metadata={"help": "Type of circuit to benchmark"},
+    )
+    depth: int = field(
+        default=3,
+        metadata={"help": "Depth of the circuit"},
+    )

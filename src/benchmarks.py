@@ -15,6 +15,7 @@ import wandb
 from cirkit.pipeline import PipelineContext, compile as compile_circuit
 from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
+from .circuit_types import CIRCUIT_BUILDERS
 wandb.require("legacy-service")
 
 
@@ -34,22 +35,15 @@ def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
 
 class WandbCircuitBenchmark:
     """Benchmark suite with wandb integration.
-
     Parameters
     ----------
     config : BenchmarkConfig
         Benchmark configuration.
-    base_symbolic_circuit : Circuit
-        The symbolic circuit to benchmark **before squaring**. It will be
-        multiplied with itself and then compiled for both the baseline and
-        Nyström variants during benchmarking.
     """
 
-    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: Circuit):
+    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: str = None):
         self.config = config
-        # Store the symbolic circuit before squaring so we can compile fresh
-        # copies for each configuration.
-        self.base_symbolic_circuit = base_symbolic_circuit
+       
         
         # Initialize wandb run
         self.run = wandb.init(
@@ -329,6 +323,16 @@ class WandbCircuitBenchmark:
                               f"rank={rank}, batch={batch_size}")
                         
                         try:
+                            builder = CIRCUIT_BUILDERS[self.config.circuit_structure]
+                            builder_kwargs = {}
+                            if self.config.circuit_structure == "deep_cp_circuit":
+                                builder_kwargs["depth"] =  self.config.depth
+                            if n_input is not None:
+                                builder_kwargs["num_input_units"] = n_input
+                            if n_sum is not None:
+                                builder_kwargs["num_sum_units"] = n_sum
+
+                            self.base_symbolic_circuit = builder(**builder_kwargs)
                             result = self.benchmark_single_configuration(
                                 n_input, n_sum, rank, batch_size, step
                             )

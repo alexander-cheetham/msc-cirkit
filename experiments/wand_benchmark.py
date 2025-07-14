@@ -33,6 +33,19 @@ def main():
         help="Maximum exponent for powers of two (2**max_exp)",
     )
 
+    parser.add_argument(
+        "--circuit-structure",
+        choices=["one_sum", "deep_cp_circuit", "MNIST"],
+        default="one_sum",
+        help="Type of circuit to benchmark",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        help="Depth for deep_cp_circuit",
+    )
+
     args = parser.parse_args()
     
     # config = BenchmarkConfig(
@@ -72,6 +85,8 @@ def main():
             powers_of_two=True,
             min_exp=args.min_exp,
             max_exp=args.max_exp,
+            circuit_structure=args.circuit_structure,
+            depth=args.depth,
         )
     else:
         config = BenchmarkConfig(
@@ -84,6 +99,8 @@ def main():
             powers_of_two=False,
             min_exp=None,
             max_exp=None,
+            circuit_structure=args.circuit_structure,
+            depth=args.depth,
         )
     
     print(f"Starting wandb experiment on {config.device}")
