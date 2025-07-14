@@ -1,6 +1,4 @@
 from typing import TYPE_CHECKING, Any, cast
-from pathlib import Path
-import sys
 
 from cirkit.backend.torch.layers import (
     TorchHadamardLayer,
@@ -9,11 +7,7 @@ from cirkit.backend.torch.layers import (
     TorchSumLayer,
     TorchTuckerLayer,
 )
-try:  # allow running tests without installing this repo as a package
-    from nystromlayer import NystromSumLayer
-except ModuleNotFoundError:  # pragma: no cover - fallback for test runner
-    sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
-    from nystromlayer import NystromSumLayer
+from nystromlayer import NystromSumLayer
 from cirkit.backend.torch.layers.optimized import TorchCPTLayer, TorchTensorDotLayer
 from cirkit.backend.torch.optimization.parameters import KroneckerOutParameterPattern
 from cirkit.backend.torch.optimization.registry import (
