@@ -106,7 +106,7 @@ class TorchCompilerState:
 
 
 class TorchCompiler(AbstractCompiler):
-    def __init__(self, semiring: str = "sum-product", fold: bool = False, optimize: bool = False):
+    def __init__(self, semiring: str = "sum-product", fold: bool = False, optimize: bool = False, nystrom_rank: int | None = None):
         super().__init__(
             CompilerLayerRegistry(DEFAULT_LAYER_COMPILATION_RULES),
             CompilerParameterRegistry(DEFAULT_PARAMETER_COMPILATION_RULES),
@@ -128,33 +128,39 @@ class TorchCompiler(AbstractCompiler):
             "layer_shatter": LayerOptRegistry(DEFAULT_LAYER_SHATTER_OPT_RULES),
         }
 
-        self._flags["nystrom"] = False
+        self._flags["nystrom_rank"] = nystrom_rank
+        self._update_layer_fuse_registry()
 
-    def compile(self, circuit: Circuit, nystrom: bool = False, **options):
-        prev = self._flags.get("nystrom", False)
-        self._flags["nystrom"] = nystrom
+    def compile(self, circuit: Circuit, nystrom_rank: int | None = None, **options):
+        prev_rank = self._flags.get("nystrom_rank")
+        if nystrom_rank is not None:
+            self._flags["nystrom_rank"] = nystrom_rank
+        self._update_layer_fuse_registry()
         try:
             if self.is_compiled(circuit):
                 return self.get_compiled_circuit(circuit)
-            return self.compile_pipeline(circuit, nystrom=nystrom)
+            return self.compile_pipeline(circuit, nystrom_rank=nystrom_rank)
         finally:
-            self._flags["nystrom"] = prev
+            self._flags["nystrom_rank"] = prev_rank
+            self._update_layer_fuse_registry()
 
-    def compile_pipeline(self, sc: Circuit, *, nystrom: bool = False) -> AbstractTorchCircuit:
+    def compile_pipeline(self, sc: Circuit, *, nystrom_rank: int | None = None) -> AbstractTorchCircuit:
         # Compile the circuits following the topological ordering of the pipeline.
         for sci in pipeline_topological_ordering([sc]):
             if self.is_compiled(sci):
                 continue
 
-            prev_nys = self._flags.get("nystrom", False)
+            prev_rank = self._flags.get("nystrom_rank")
             prev_opt = self._flags.get("optimize", False)
-            self._flags["nystrom"] = nystrom if sci is sc else False
-            if nystrom and sci is not sc:
+            self._flags["nystrom_rank"] = nystrom_rank if sci is sc else None
+            self._update_layer_fuse_registry()
+            if nystrom_rank is not None and sci is not sc:
                 self._flags["optimize"] = False
             try:
                 self._compile_circuit(sci)
             finally:
-                self._flags["nystrom"] = prev_nys
+                self._flags["nystrom_rank"] = prev_rank
+                self._update_layer_fuse_registry()
                 self._flags["optimize"] = prev_opt
 
         return self.get_compiled_circuit(sc)
@@ -173,7 +179,16 @@ class TorchCompiler(AbstractCompiler):
 
     @property
     def is_nystrom_enabled(self) -> bool:
-        return self._flags.get("nystrom", False)
+        return self._flags.get("nystrom_rank") is not None
+
+    @property
+    def nystrom_rank(self) -> int | None:
+        return self._flags.get("nystrom_rank")
+
+    def _update_layer_fuse_registry(self) -> None:
+        self._optimization_registry["layer_fuse"] = LayerOptRegistry(
+            {} if self.is_nystrom_enabled else DEFAULT_LAYER_FUSE_OPT_RULES
+        )
 
     @property
     def state(self) -> TorchCompilerState:

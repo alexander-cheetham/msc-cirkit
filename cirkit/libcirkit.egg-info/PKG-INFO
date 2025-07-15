@@ -1,0 +1,49 @@
+Metadata-Version: 2.4
+Name: libcirkit
+Version: 0.2.1
+Summary: a python framework to build, learn and reason about probabilistic circuits and tensor networks
+Author: The APRIL Lab.
+License: GPLv3
+Project-URL: Homepage, https://github.com/april-tools/cirkit
+Project-URL: Bug Tracker, https://github.com/april-tools/cirkit/issues
+Project-URL: Coverage, https://app.codecov.io/gh/april-tools/cirkit
+Project-URL: Documentation, https://cirkit-docs.readthedocs.io
+Keywords: probabilistic-modeling,tractable-models,probabilistic-inference,probabilistic-circuits,probabilistic-machine-learning,probabilistic-reasoning,tensor-network-decompositions,tractable-inference,tensor-net
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torch>=2.3.0
+Requires-Dist: numpy>=2.1.0
+Requires-Dist: opt_einsum>=3.4.0
+Requires-Dist: einops~=0.8.0
+Requires-Dist: scipy~=1.14.0
+Requires-Dist: graphviz~=0.20.3
+Provides-Extra: dev
+Requires-Dist: black[jupyter]~=23.0; extra == "dev"
+Requires-Dist: mypy==1.7.1; extra == "dev"
+Requires-Dist: pylint~=3.0.0; extra == "dev"
+Requires-Dist: pydocstyle[toml]~=6.3.0; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: pylint-per-file-ignores; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: mkdocs; extra == "docs"
+Requires-Dist: mkdocs-material; extra == "docs"
+Requires-Dist: mkdocstrings-python; extra == "docs"
+Requires-Dist: mkdocs-gen-files; extra == "docs"
+Requires-Dist: mkdocs-literate-nav; extra == "docs"
+Requires-Dist: mkdocs-section-index; extra == "docs"
+Requires-Dist: mkdocs-jupyter; extra == "docs"
+Provides-Extra: notebooks
+Requires-Dist: notebook; extra == "notebooks"
+Requires-Dist: torchvision; extra == "notebooks"
+Requires-Dist: matplotlib; extra == "notebooks"
+Requires-Dist: scikit-learn; extra == "notebooks"
+Requires-Dist: pandas; extra == "notebooks"
+Requires-Dist: h5py; extra == "notebooks"
+Requires-Dist: PySDD; extra == "notebooks"

@@ -1,5 +1,6 @@
 """Core benchmarking logic."""
 
+import traceback
 import torch
 import time
 import numpy as np
@@ -15,41 +16,36 @@ import wandb
 from cirkit.pipeline import PipelineContext, compile as compile_circuit
 from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
+from .circuit_types import CIRCUIT_BUILDERS
 wandb.require("legacy-service")
 
 
-def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
+def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None):
     """Compile a symbolic circuit with optional Nyström optimization."""
     ctx = PipelineContext(
         backend="torch",
-        semiring="sum-product",
+        semiring="lse-sum",
         fold=False,
         optimize=True,
-        nystrom=nystrom,
+        nystrom_rank=rank,
     )
-    compiled = compile_circuit(circuit, ctx).to(device).eval()
+    compiled = compile_circuit(circuit, ctx, nystrom_rank=rank).to(device).eval()
     return compiled
 
 
 
 class WandbCircuitBenchmark:
     """Benchmark suite with wandb integration.
-
     Parameters
     ----------
     config : BenchmarkConfig
         Benchmark configuration.
-    base_symbolic_circuit : Circuit
-        The symbolic circuit to benchmark **before squaring**. It will be
-        multiplied with itself and then compiled for both the baseline and
-        Nyström variants during benchmarking.
     """
 
-    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: Circuit):
+    def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: str = None):
         self.config = config
-        # Store the symbolic circuit before squaring so we can compile fresh
-        # copies for each configuration.
         self.base_symbolic_circuit = base_symbolic_circuit
+       
         
         # Initialize wandb run
         self.run = wandb.init(
@@ -88,6 +84,15 @@ class WandbCircuitBenchmark:
         """Create test input tensor with correct shape for circuit."""
         # For squared circuit: num_variables = input_dim^2
         num_variables = input_dim ** 2
+        if self.config.circuit_structure == "MNIST":
+            # MNIST circuits use categorical input layers expecting discrete
+            # pixel values in the range [0, 255]. ``torch.randn`` would
+            # generate floating point values that after casting to ``long`` in
+            # the Categorical layer might be negative or exceed the number of
+            # categories, triggering CUDA index errors.  ``torch.randint``
+            # ensures values fall within the valid range.
+            num_variables = 784
+            return torch.randint(0, 256, (batch_size, num_variables), device=device)
         return torch.randn(batch_size, num_variables, device=device)
     
     def time_forward_pass(self, circuit, test_input, num_warmup=10, num_trials=100):
@@ -158,8 +163,8 @@ class WandbCircuitBenchmark:
             symbolic = SF.multiply(symbolic, symbolic)
 
             # Compile baseline and Nyström versions
-            original_circuit = compile_symbolic(symbolic, nystrom=False, device=self.config.device)
-            nystrom_circuit = compile_symbolic(symbolic, nystrom=True, device=self.config.device)
+            original_circuit = compile_symbolic(symbolic, device=self.config.device, rank=None)
+            nystrom_circuit = compile_symbolic(symbolic, device=self.config.device, rank=rank)
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
@@ -329,6 +334,18 @@ class WandbCircuitBenchmark:
                               f"rank={rank}, batch={batch_size}")
                         
                         try:
+                            builder = CIRCUIT_BUILDERS[self.config.circuit_structure]
+                            builder_kwargs = {}
+                            if self.config.circuit_structure == "deep_cp_circuit":
+                                builder_kwargs["depth"] =  self.config.depth
+                            if self.config.circuit_structure == "MNIST":
+                                builder_kwargs["region_graph"] = self.config.region_graph
+                            if n_input is not None:
+                                builder_kwargs["num_input_units"] = n_input
+                            if n_sum is not None:
+                                builder_kwargs["num_sum_units"] = n_sum
+
+                            self.base_symbolic_circuit = builder(**builder_kwargs)
                             result = self.benchmark_single_configuration(
                                 n_input, n_sum, rank, batch_size, step
                             )
@@ -337,6 +354,8 @@ class WandbCircuitBenchmark:
                             
                         except Exception as e:
                             print(f"  Failed: {e}")
+                            tb_str = traceback.format_exc()
+                            print(f"Error details:\n{tb_str}")
                             wandb.log({"errors/count": 1, "errors/message": str(e)})
                             continue
         

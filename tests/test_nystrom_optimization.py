@@ -1,15 +1,5 @@
 import pytest
-import sys
-from pathlib import Path
-import importlib
-
-src_path = str(Path(__file__).resolve().parents[1] / "src")
-sys.path.insert(0, src_path)
-for m in list(sys.modules.keys()):
-    if m.startswith("cirkit"):
-        del sys.modules[m]
 import cirkit.pipeline as _cp
-importlib.reload(_cp)
 from cirkit.pipeline import PipelineContext
 
 try:
@@ -84,7 +74,7 @@ def test_nystrom_flag_replaces_layers():
     circuit = define_circuit_one_sum(2, 2)
     circuit = SF.multiply(circuit, circuit)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx).cpu().eval()
@@ -103,7 +93,7 @@ def test_nystrom_flag_replaces_layers():
 def test_nystrom_no_match_raises():
     circuit = define_circuit_one_sum(2, 2)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     with pytest.raises(ValueError):
@@ -117,15 +107,62 @@ def test_flag_off_leaves_layers():
         backend="torch", semiring="sum-product", fold=False, optimize=True
     )
     from cirkit.pipeline import compile as compile_circuit
-    compiled = compile_circuit(circuit, ctx, nystrom=False).cpu().eval()
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
     assert not any(isinstance(m, NystromSumLayer) for m in compiled.modules())
+
 
 
 def test_nystrom_deep_network():
     circuit = define_deep_cp_circuit(2, 2)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx).cpu().eval()
     assert sum(isinstance(m, NystromSumLayer) for m in compiled.modules()) > 0
+
+
+def test_nystrom_custom_rank():
+    circuit = define_circuit_one_sum(3, 3)
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=1
+    )
+    from cirkit.pipeline import compile as compile_circuit
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
+    for m in compiled.modules():
+        if isinstance(m, NystromSumLayer):
+            assert m.rank == 1
+
+
+@pytest.mark.parametrize("region_graph", ["random-binary-tree", "quad-tree-2", "quad-tree-4"])
+def test_mnist_circuit_nystrom_compile(region_graph):
+    from src.circuit_types import make_squarable_mnist_circuit
+
+    circuit = make_squarable_mnist_circuit(
+        num_input_units=4, num_sum_units=4, region_graph=region_graph
+    )
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
+    )
+    from cirkit.symbolic.circuit import are_compatible
+    print('compatible with self', are_compatible(circuit, circuit))
+    from cirkit.pipeline import compile as compile_circuit
+    assert sum(isinstance(m, NystromSumLayer) for m in compile_circuit(circuit, ctx).modules()) > 0
+
+
+@pytest.mark.parametrize("region_graph", ["poon-domingos", "quad-graph"])
+def test_mnist_circuit_nystrom_compile_raises(region_graph):
+    from src.circuit_types import make_squarable_mnist_circuit
+
+    with pytest.raises(ValueError):
+        circuit = make_squarable_mnist_circuit(
+            num_input_units=4, num_sum_units=4, region_graph=region_graph
+        )
+        circuit = SF.multiply(circuit, circuit)
+        ctx = PipelineContext(
+            backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
+        )
+        from cirkit.pipeline import compile as compile_circuit
+        compile_circuit(circuit, ctx)
