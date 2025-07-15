@@ -17,6 +17,8 @@ from cirkit.pipeline import PipelineContext, compile as compile_circuit
 from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
 from .circuit_types import CIRCUIT_BUILDERS
+from cirkit.symbolic.io import plot_circuit
+import os
 wandb.require("legacy-service")
 
 
@@ -158,9 +160,21 @@ class WandbCircuitBenchmark:
         })
         
         try:
-            # Build symbolic circuit and its squared version
+            # Build symbolic circuit and log its structure
             symbolic = self.base_symbolic_circuit
+            pre_path = "circuit_pre_square.png"
+            plot_circuit(symbolic, out_path=pre_path)
+            wandb.log({"charts/circuit_pre_square": wandb.Image(pre_path)})
+            if os.path.exists(pre_path):
+                os.remove(pre_path)
+
+            # Square the circuit and log its structure
             symbolic = SF.multiply(symbolic, symbolic)
+            post_path = "circuit_post_square.png"
+            plot_circuit(symbolic, out_path=post_path)
+            wandb.log({"charts/circuit_post_square": wandb.Image(post_path)})
+            if os.path.exists(post_path):
+                os.remove(post_path)
 
             # Compile baseline and Nyström versions
             original_circuit = compile_symbolic(symbolic, device=self.config.device, rank=None)
