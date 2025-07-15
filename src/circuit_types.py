@@ -7,11 +7,12 @@ from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
 from cirkit.templates.region_graph import RandomBinaryTree
 from cirkit.templates.utils import Parameterization, parameterization_to_factory
+from helpers import build_circuit_one_sum
 
 
 def define_circuit_one_sum(num_input_units=2, num_sum_units=2):
     rg = RandomBinaryTree(1, depth=None, num_repetitions=1, seed=42)
-    rg.build_circuit = MethodType(_build_circuit_one_sum, rg)
+    rg.build_circuit = MethodType(build_circuit_one_sum, rg)
     input_factory = lambda scope, n: GaussianLayer(scope=scope, num_output_units=n)
     p = Parameterization(activation="softmax", initialization="normal")
     sum_param_factory = parameterization_to_factory(p)

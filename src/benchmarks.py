@@ -1,5 +1,6 @@
 """Core benchmarking logic."""
 
+import traceback
 import torch
 import time
 import numpy as np
@@ -341,6 +342,8 @@ class WandbCircuitBenchmark:
                             
                         except Exception as e:
                             print(f"  Failed: {e}")
+                            tb_str = traceback.format_exc()
+                            print(f"Error details:\n{tb_str}")
                             wandb.log({"errors/count": 1, "errors/message": str(e)})
                             continue
         
