@@ -38,3 +38,7 @@ class BenchmarkConfig:
         default=3,
         metadata={"help": "Depth of the circuit"},
     )
+    region_graph: Optional[str] = field(
+        default=None,
+        metadata={"help": "Region graph for MNIST circuits"},
+    )

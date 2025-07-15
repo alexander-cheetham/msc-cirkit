@@ -44,6 +44,7 @@ class WandbCircuitBenchmark:
 
     def __init__(self, config: BenchmarkConfig, base_symbolic_circuit: str = None):
         self.config = config
+        self.base_symbolic_circuit = base_symbolic_circuit
        
         
         # Initialize wandb run
@@ -328,6 +329,8 @@ class WandbCircuitBenchmark:
                             builder_kwargs = {}
                             if self.config.circuit_structure == "deep_cp_circuit":
                                 builder_kwargs["depth"] =  self.config.depth
+                            if self.config.circuit_structure == "MNIST":
+                                builder_kwargs["region_graph"] = self.config.region_graph
                             if n_input is not None:
                                 builder_kwargs["num_input_units"] = n_input
                             if n_sum is not None:

@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wandb
 from src.config import BenchmarkConfig
 from src.benchmarks import WandbCircuitBenchmark
-import helpers
+from src.circuit_types import CIRCUIT_BUILDERS
 
 def main():
     """Run benchmark with wandb tracking."""
@@ -44,6 +44,12 @@ def main():
         type=int,
         default=1,
         help="Depth for deep_cp_circuit",
+    )
+    parser.add_argument(
+        "--region-graph",
+        type=str,
+        default="quad-tree-4",
+        help="Region graph to use for MNIST circuits",
     )
 
     args = parser.parse_args()
@@ -87,6 +93,7 @@ def main():
             max_exp=args.max_exp,
             circuit_structure=args.circuit_structure,
             depth=args.depth,
+            region_graph=args.region_graph,
         )
     else:
         config = BenchmarkConfig(
@@ -101,14 +108,22 @@ def main():
             max_exp=None,
             circuit_structure=args.circuit_structure,
             depth=args.depth,
+            region_graph=args.region_graph,
         )
     
     print(f"Starting wandb experiment on {config.device}")
-    # Build the symbolic circuit once. It will be squared and compiled inside
-    # the benchmark for each configuration.
-    symbolic_circuit = helpers.define_circuit_one_sum(
-        config.input_units[0], config.sum_units[0]
-    )
+    # Build the symbolic circuit once using the selected builder.
+    builder = CIRCUIT_BUILDERS[config.circuit_structure]
+    builder_kwargs = {
+        "num_input_units": config.input_units[0],
+        "num_sum_units": config.sum_units[0],
+    }
+    if config.circuit_structure == "deep_cp_circuit":
+        builder_kwargs["depth"] = config.depth
+    if config.circuit_structure == "MNIST":
+        builder_kwargs["region_graph"] = config.region_graph
+
+    symbolic_circuit = builder(**builder_kwargs)
     benchmark = WandbCircuitBenchmark(config, symbolic_circuit)
     results = benchmark.run_full_benchmark()
     
