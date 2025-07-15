@@ -19,7 +19,13 @@ from .circuit_types import CIRCUIT_BUILDERS
 wandb.require("legacy-service")
 
 
-def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
+def compile_symbolic(
+    circuit: Circuit,
+    *,
+    nystrom: bool,
+    rank: int | None,
+    device: str,
+):
     """Compile a symbolic circuit with optional Nyström optimization."""
     ctx = PipelineContext(
         backend="torch",
@@ -27,8 +33,9 @@ def compile_symbolic(circuit: Circuit, *, nystrom: bool, device: str):
         fold=False,
         optimize=True,
         nystrom=nystrom,
+        nystrom_rank=rank,
     )
-    compiled = compile_circuit(circuit, ctx).to(device).eval()
+    compiled = compile_circuit(circuit, ctx, nystrom_rank=rank).to(device).eval()
     return compiled
 
 
@@ -152,8 +159,18 @@ class WandbCircuitBenchmark:
             symbolic = SF.multiply(symbolic, symbolic)
 
             # Compile baseline and Nyström versions
-            original_circuit = compile_symbolic(symbolic, nystrom=False, device=self.config.device)
-            nystrom_circuit = compile_symbolic(symbolic, nystrom=True, device=self.config.device)
+            original_circuit = compile_symbolic(
+                symbolic,
+                nystrom=False,
+                rank=None,
+                device=self.config.device,
+            )
+            nystrom_circuit = compile_symbolic(
+                symbolic,
+                nystrom=True,
+                rank=rank,
+                device=self.config.device,
+            )
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)

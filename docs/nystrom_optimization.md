@@ -5,7 +5,7 @@ This repository extends the default CirKit torch backend with a new layer shatte
 ## Changes in `optimization/layers.py`
 
 - **`NystromPattern`** – new `LayerOptPattern` subclass matching a single dense `TorchSumLayer` with arity `1` and a Kronecker structured weight. The `match` method simply returns `True`, so every layer that fits the structural constraints is eligible for replacement.
-- **`apply_nystrom_sum`** – new apply function that constructs a `NystromSumLayer` directly from the matched dense layer. The rank is chosen as `min(num_input_units, num_output_units)` for simplicity.
+- **`apply_nystrom_sum`** – new apply function that constructs a `NystromSumLayer` directly from the matched dense layer. The rank defaults to `min(num_input_units, num_output_units)` but can be overridden via the `nystrom_rank` compiler flag.
 - **Default rule map** – `NystromPattern` is registered in `DEFAULT_LAYER_SHATTER_OPT_RULES` before the existing `DenseKroneckerPattern` rule. This ensures the Nyström rule is tried first and does not interfere with the remaining shatter or fuse rules.
 
 ## Compiler updates

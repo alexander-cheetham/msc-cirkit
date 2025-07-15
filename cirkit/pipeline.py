@@ -27,7 +27,13 @@ class PipelineContext(AbstractContextManager):
     can be added to the context.
     """
 
-    def __init__(self, backend: str = "torch", nystrom: bool = False, **backend_kwargs):
+    def __init__(
+        self,
+        backend: str = "torch",
+        nystrom: bool = False,
+        nystrom_rank: int | None = None,
+        **backend_kwargs,
+    ):
         """Initialzes a pipeline context, given the compilation backend and
             the compilation flags.
 
@@ -43,6 +49,7 @@ class PipelineContext(AbstractContextManager):
         # Backend specs
         self._backend = backend
         backend_kwargs.setdefault("nystrom", nystrom)
+        backend_kwargs.setdefault("nystrom_rank", nystrom_rank)
         self._backend_kwargs = backend_kwargs
 
         # Symbolic operator registry
@@ -133,7 +140,12 @@ class PipelineContext(AbstractContextManager):
         """
         self._compiler.add_initializer_rule(func)
 
-    def compile(self, sc: Circuit, nystrom: bool | None = None) -> CompiledCircuit:
+    def compile(
+        self,
+        sc: Circuit,
+        nystrom: bool | None = None,
+        nystrom_rank: int | None = None,
+    ) -> CompiledCircuit:
         """Compile a symbolic circuit.
 
         Args:
@@ -144,7 +156,9 @@ class PipelineContext(AbstractContextManager):
         """
         if nystrom is None:
             nystrom = self._backend_kwargs.get("nystrom", False)
-        return self._compiler.compile(sc, nystrom=nystrom)
+        if nystrom_rank is None:
+            nystrom_rank = self._backend_kwargs.get("nystrom_rank")
+        return self._compiler.compile(sc, nystrom=nystrom, nystrom_rank=nystrom_rank)
 
     def is_compiled(self, sc: Circuit) -> bool:
         """Check whether a symbolic circuit has been compiled in this context.
@@ -298,10 +312,16 @@ class PipelineContext(AbstractContextManager):
         return self.compile(conj_sc)
 
 
-def compile(sc: Circuit, ctx: PipelineContext | None = None, *, nystrom: bool | None = None) -> CompiledCircuit:
+def compile(
+    sc: Circuit,
+    ctx: PipelineContext | None = None,
+    *,
+    nystrom: bool | None = None,
+    nystrom_rank: int | None = None,
+) -> CompiledCircuit:
     if ctx is None:
         ctx = _PIPELINE_CONTEXT.get()
-    return ctx.compile(sc, nystrom=nystrom)
+    return ctx.compile(sc, nystrom=nystrom, nystrom_rank=nystrom_rank)
 
 
 def concatenate(*cc: CompiledCircuit, ctx: PipelineContext | None = None) -> CompiledCircuit:

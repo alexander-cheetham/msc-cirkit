@@ -90,6 +90,23 @@ def test_nystrom_flag_replaces_layers():
     assert found
 
 
+def test_custom_nystrom_rank():
+    circuit = define_circuit_one_sum(2, 2)
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(
+        backend="torch",
+        semiring="sum-product",
+        fold=False,
+        optimize=True,
+        nystrom=True,
+        nystrom_rank=1,
+    )
+    from cirkit.pipeline import compile as compile_circuit
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
+    ranks = [m.rank for m in compiled.modules() if isinstance(m, NystromSumLayer)]
+    assert ranks and all(r == 1 for r in ranks)
+
+
 def test_nystrom_no_match_raises():
     circuit = define_circuit_one_sum(2, 2)
     ctx = PipelineContext(
