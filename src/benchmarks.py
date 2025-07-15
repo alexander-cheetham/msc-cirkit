@@ -84,6 +84,15 @@ class WandbCircuitBenchmark:
         """Create test input tensor with correct shape for circuit."""
         # For squared circuit: num_variables = input_dim^2
         num_variables = input_dim ** 2
+        if self.config.circuit_structure == "MNIST":
+            # MNIST circuits use categorical input layers expecting discrete
+            # pixel values in the range [0, 255]. ``torch.randn`` would
+            # generate floating point values that after casting to ``long`` in
+            # the Categorical layer might be negative or exceed the number of
+            # categories, triggering CUDA index errors.  ``torch.randint``
+            # ensures values fall within the valid range.
+            num_variables = 784
+            return torch.randint(0, 256, (batch_size, num_variables), device=device)
         return torch.randn(batch_size, num_variables, device=device)
     
     def time_forward_pass(self, circuit, test_input, num_warmup=10, num_trials=100):
