@@ -3,11 +3,14 @@
 from types import MethodType
 from typing import Callable, Dict, Optional
 
+from cirkit.templates import data_modalities
+
 from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
 from cirkit.templates.region_graph import RandomBinaryTree
 from cirkit.templates.utils import Parameterization, parameterization_to_factory
 from helpers import build_circuit_one_sum
+from cirkit.symbolic.circuit import are_compatible
 
 
 def define_circuit_one_sum(num_input_units=2, num_sum_units=2):
@@ -47,20 +50,36 @@ def make_random_binary_tree_circuit(
     return circuit
 
 
-def make_mnist_circuit(
+def make_squarable_mnist_circuit(
     *,
-    num_input_units: Optional[int] = None,
-    num_sum_units: Optional[int] = None,
-    seed: int = 0,
+    region_graph,
+    num_input_units: Optional[int] = 64,
+    num_sum_units: Optional[int] = 64,
 ) -> Circuit:
-    """Placeholder for an MNIST-suitable circuit."""
-    return make_random_binary_tree_circuit(
-        3, num_input_units=num_input_units, num_sum_units=num_sum_units, seed=seed
+    """Construct a symbolic circuit tailored for MNIST data.
+
+    region_graph: any region graph object compatible with the circuit.
+    """
+    circuit = data_modalities.image_data(
+        (1, 28, 28),
+        region_graph=region_graph,
+        input_layer="categorical",
+        num_input_units=num_input_units,
+        sum_product_layer="cp",
+        num_sum_units=num_sum_units,
+        num_classes=1,
+        sum_weight_param=Parameterization(
+            activation="softmax",
+            initialization="normal",
+        ),
     )
+    if not are_compatible(circuit, circuit):
+        raise ValueError("The provided region_graph produces an incompatible circuit.")
+    return circuit
 
 
 CIRCUIT_BUILDERS: Dict[str, Callable[..., Circuit]] = {
     "one_sum": define_circuit_one_sum,
     "deep_cp_circuit": make_random_binary_tree_circuit,
-    "MNIST": make_mnist_circuit,
+    "MNIST": make_squarable_mnist_circuit,
 }

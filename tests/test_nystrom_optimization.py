@@ -133,3 +133,36 @@ def test_nystrom_custom_rank():
     for m in compiled.modules():
         if isinstance(m, NystromSumLayer):
             assert m.rank == 1
+
+
+@pytest.mark.parametrize("region_graph", ["random-binary-tree", "quad-tree-2", "quad-tree-4"])
+def test_mnist_circuit_nystrom_compile(region_graph):
+    from src.circuit_types import make_squarable_mnist_circuit
+
+    circuit = make_squarable_mnist_circuit(
+        num_input_units=4, num_sum_units=4, region_graph=region_graph
+    )
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
+    )
+    from cirkit.symbolic.circuit import are_compatible
+    print('compatible with self', are_compatible(circuit, circuit))
+    from cirkit.pipeline import compile as compile_circuit
+    assert sum(isinstance(m, NystromSumLayer) for m in compile_circuit(circuit, ctx).modules()) > 0
+
+
+@pytest.mark.parametrize("region_graph", ["poon-domingos", "quad-graph"])
+def test_mnist_circuit_nystrom_compile_raises(region_graph):
+    from src.circuit_types import make_squarable_mnist_circuit
+
+    with pytest.raises(ValueError):
+        circuit = make_squarable_mnist_circuit(
+            num_input_units=4, num_sum_units=4, region_graph=region_graph
+        )
+        circuit = SF.multiply(circuit, circuit)
+        ctx = PipelineContext(
+            backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
+        )
+        from cirkit.pipeline import compile as compile_circuit
+        compile_circuit(circuit, ctx)
