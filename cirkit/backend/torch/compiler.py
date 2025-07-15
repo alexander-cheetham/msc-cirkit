@@ -129,17 +129,20 @@ class TorchCompiler(AbstractCompiler):
         }
 
         self._flags["nystrom_rank"] = nystrom_rank
+        self._update_layer_fuse_registry()
 
     def compile(self, circuit: Circuit, nystrom_rank: int | None = None, **options):
         prev_rank = self._flags.get("nystrom_rank")
         if nystrom_rank is not None:
             self._flags["nystrom_rank"] = nystrom_rank
+        self._update_layer_fuse_registry()
         try:
             if self.is_compiled(circuit):
                 return self.get_compiled_circuit(circuit)
             return self.compile_pipeline(circuit, nystrom_rank=nystrom_rank)
         finally:
             self._flags["nystrom_rank"] = prev_rank
+            self._update_layer_fuse_registry()
 
     def compile_pipeline(self, sc: Circuit, *, nystrom_rank: int | None = None) -> AbstractTorchCircuit:
         # Compile the circuits following the topological ordering of the pipeline.
@@ -150,12 +153,14 @@ class TorchCompiler(AbstractCompiler):
             prev_rank = self._flags.get("nystrom_rank")
             prev_opt = self._flags.get("optimize", False)
             self._flags["nystrom_rank"] = nystrom_rank if sci is sc else None
+            self._update_layer_fuse_registry()
             if nystrom_rank is not None and sci is not sc:
                 self._flags["optimize"] = False
             try:
                 self._compile_circuit(sci)
             finally:
                 self._flags["nystrom_rank"] = prev_rank
+                self._update_layer_fuse_registry()
                 self._flags["optimize"] = prev_opt
 
         return self.get_compiled_circuit(sc)
@@ -179,6 +184,11 @@ class TorchCompiler(AbstractCompiler):
     @property
     def nystrom_rank(self) -> int | None:
         return self._flags.get("nystrom_rank")
+
+    def _update_layer_fuse_registry(self) -> None:
+        self._optimization_registry["layer_fuse"] = LayerOptRegistry(
+            {} if self.is_nystrom_enabled else DEFAULT_LAYER_FUSE_OPT_RULES
+        )
 
     @property
     def state(self) -> TorchCompilerState:

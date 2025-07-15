@@ -209,8 +209,8 @@ def apply_tensordot_tensordot(
 
 
 DEFAULT_LAYER_FUSE_OPT_RULES: dict[LayerOptPattern, LayerOptApplyFunc] = {  # type: ignore[misc]
-    # TuckerPattern: apply_tucker,
-    # CandecompPattern: apply_candecomp,
+    TuckerPattern: apply_tucker,
+    CandecompPattern: apply_candecomp,
 }
 DEFAULT_LAYER_SHATTER_OPT_RULES: dict[LayerOptPattern, LayerOptApplyFunc] = {  # type: ignore[misc]
     NystromPattern: apply_nystrom_sum,
