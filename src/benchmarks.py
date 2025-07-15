@@ -24,7 +24,7 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None):
     """Compile a symbolic circuit with optional Nyström optimization."""
     ctx = PipelineContext(
         backend="torch",
-        semiring="sum-product",
+        semiring="lse-sum",
         fold=False,
         optimize=True,
         nystrom_rank=rank,
