@@ -10,24 +10,24 @@ This repository extends the default CirKit torch backend with a new layer shatte
 
 ## Compiler updates
 
-- **`TorchCompiler.compile`** now accepts a `nystrom` boolean flag. The flag is stored in `self._flags` and restored after compilation so nested compilations are handled correctly.
-- **`compile_pipeline`** propagates the flag only to the main circuit. Subcircuits compile with normal optimizations so the Nyström rule only fires once on the top level.
-- **`is_nystrom_enabled`** property exposes the active flag.
-- **`_post_process_circuit`** forwards the flag to `_optimize_circuit` so the optimizer knows whether to include the Nyström rule.
+- **`TorchCompiler.compile`** now accepts an optional `nystrom_rank` argument. When this value is not ``None`` the Nyström rule is enabled for the top level circuit.
+- **`compile_pipeline`** forwards the rank only to the main circuit so the rule fires at most once.
+- **`is_nystrom_enabled`** checks whether a rank is set.
+- **`_post_process_circuit`** passes the boolean result to `_optimize_circuit` so the optimizer knows whether to include the Nyström rule.
 - **`_optimize_circuit`** disables the flag after the shatter step if the rule matched once, preventing repeated replacement passes.
-- **`_optimize_layers`** accepts the flag and filters the pattern list accordingly. When `nystrom` is true and the shatter pass finds no matches, a `ValueError` is raised which allows tests to assert failure conditions.
-- When the Nyström flag is enabled the optimizer skips other layer and parameter
+- **`_optimize_layers`** filters the pattern list based on the flag. When active and the shatter pass finds no matches, a ``ValueError`` is raised which allows tests to assert failure conditions.
+- When the optimization is active the optimizer skips other layer and parameter
   rules until after the replacement, avoiding interference from additional
   optimisations.
 
-These changes are wired through `PipelineContext.compile` and the module level `compile` helper so callers simply pass `nystrom=True` when desired.
+These changes are wired through `PipelineContext.compile` and the module level `compile` helper. Nyström optimization is enabled by providing a `nystrom_rank` value when compiling; otherwise the circuit is compiled normally.
 
 ## Test overview
 
 `tests/test_nystrom_optimization.py` exercises three scenarios:
 
-1. **Happy path** – constructs a small two-layer circuit, squares it and compiles with `nystrom=True`. The resulting compiled model is checked to contain a `NystromSumLayer` with built attributes `U` and `V`.
-2. **No match** – compiling a single dense layer with the flag set raises `ValueError`, proving that optimization only proceeds when the pattern actually matches.
-3. **Flag off** – compiling the squared circuit with `nystrom=False` leaves the graph unchanged and no Nyström layers are produced.
+1. **Happy path** – constructs a small two-layer circuit, squares it and compiles with `nystrom_rank` set. The resulting compiled model is checked to contain a `NystromSumLayer` with built attributes `U` and `V`.
+2. **No match** – compiling a single dense layer with a rank specified raises `ValueError`, proving that optimization only proceeds when the pattern actually matches.
+3. **Disabled** – compiling the squared circuit without specifying a rank leaves the graph unchanged and no Nyström layers are produced.
 
 Since the new rule is inserted alongside existing ones but only activated via the flag, standard compilation and other optimization rules continue to behave exactly as before.

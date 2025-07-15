@@ -190,7 +190,10 @@ def apply_nystrom_sum(
 ) -> tuple[TorchLayer]:
     """Given a matched pair of Dense layers, return a NystromSumLayer instance."""
     dense1 = cast(TorchSumLayer, match.entries[0])
-    nys = NystromSumLayer(dense1, rank=min(dense1.num_input_units, dense1.num_output_units))
+    rank = getattr(compiler, "nystrom_rank", None)
+    if rank is None:
+        rank = min(dense1.num_input_units, dense1.num_output_units)
+    nys = NystromSumLayer(dense1, rank=rank)
     return (nys,)
 
 

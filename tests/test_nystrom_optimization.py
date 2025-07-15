@@ -74,7 +74,7 @@ def test_nystrom_flag_replaces_layers():
     circuit = define_circuit_one_sum(2, 2)
     circuit = SF.multiply(circuit, circuit)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx).cpu().eval()
@@ -93,7 +93,7 @@ def test_nystrom_flag_replaces_layers():
 def test_nystrom_no_match_raises():
     circuit = define_circuit_one_sum(2, 2)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     with pytest.raises(ValueError):
@@ -107,7 +107,7 @@ def test_flag_off_leaves_layers():
         backend="torch", semiring="sum-product", fold=False, optimize=True
     )
     from cirkit.pipeline import compile as compile_circuit
-    compiled = compile_circuit(circuit, ctx, nystrom=False).cpu().eval()
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
     assert not any(isinstance(m, NystromSumLayer) for m in compiled.modules())
 
 
@@ -115,8 +115,21 @@ def test_flag_off_leaves_layers():
 def test_nystrom_deep_network():
     circuit = define_deep_cp_circuit(2, 2)
     ctx = PipelineContext(
-        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom=True
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=2
     )
     from cirkit.pipeline import compile as compile_circuit
     compiled = compile_circuit(circuit, ctx).cpu().eval()
     assert sum(isinstance(m, NystromSumLayer) for m in compiled.modules()) > 0
+
+
+def test_nystrom_custom_rank():
+    circuit = define_circuit_one_sum(3, 3)
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(
+        backend="torch", semiring="sum-product", fold=False, optimize=True, nystrom_rank=1
+    )
+    from cirkit.pipeline import compile as compile_circuit
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
+    for m in compiled.modules():
+        if isinstance(m, NystromSumLayer):
+            assert m.rank == 1
