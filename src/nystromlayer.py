@@ -97,17 +97,20 @@ class NystromSumLayer(TorchSumLayer):
         rank: int,
         learnable_rank: bool = False,
         pivot: str = "random",
+        semiring=None,
     ):
         # ------------------------------------------------------------------
         # 0 · Call the parent ctor with the same signature it expects
         # ------------------------------------------------------------------
 
+        if semiring is None:
+            semiring = original_layer.semiring
         super().__init__(
             num_input_units=original_layer.num_input_units,
             num_output_units=original_layer.num_output_units,
             arity=original_layer.arity,
             weight=original_layer.weight,
-            semiring=original_layer.semiring,
+            semiring=semiring,
             num_folds=original_layer.num_folds,
         )
         # ------------------------------------------------------------------
@@ -156,12 +159,27 @@ class NystromSumLayer(TorchSumLayer):
         return self.__class__.__name__
 
     # ------------------------------------------------------------------
-    # forward pass is unchanged from earlier answer
+    # forward pass uses the evaluation semiring with Nyström factors
     # ------------------------------------------------------------------
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        # x: (F, H, B, Ki) -> (F, B, H * Ki)
         x = x.permute(0, 2, 1, 3).flatten(start_dim=2)
-        temp = torch.einsum("fbi,fir->fbr", x, self.V)
-        return torch.einsum("fbr,for->fbo", temp, self.U)
+        # first multiply by Vᵀ under the semiring
+        temp = self.semiring.einsum(
+            "fbi,fir->fbr",
+            inputs=(x,),
+            operands=(self.V,),
+            dim=-1,
+            keepdim=True,
+        )
+        # then multiply by U
+        return  self.semiring.einsum(
+            "fbr,for->fbo",
+            inputs=(temp,),
+            operands=(self.U,),
+            dim=-1,
+            keepdim=True,
+        )
 
     # ------------------------------------------------------------------
     # helper ------------------------------------------------------------
@@ -184,6 +202,9 @@ class NystromSumLayer(TorchSumLayer):
                 base_weight = original_layer.weight._nodes[0]()
             else:
                 base_weight = original_layer.weight()
+            # Prepare weights depending on the semiring. For log-space
+            # computation ("lse-sum"), convert the logits to log-probabilities;
+            # otherwise operate on probabilities in linear space.
             F_, K_o_base, K_i_base = base_weight.shape
             K_o = K_o_base * K_o_base
             K_i = K_i_base * K_i_base
@@ -199,7 +220,8 @@ class NystromSumLayer(TorchSumLayer):
                     r1 = rows % K_o_base
                     c0 = torch.div(cols, K_i_base, rounding_mode='floor')
                     c1 = cols % K_i_base
-                    return M_f[r0][:, c0] * M_f[r1][:, c1]
+
+                    return self.semiring.mul(M_f[r0][:, c0], M_f[r1][:, c1])
 
                 if pivots is not None:
                     I, J = pivots[f]

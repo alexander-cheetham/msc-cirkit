@@ -193,7 +193,11 @@ def apply_nystrom_sum(
     rank = getattr(compiler, "nystrom_rank", None)
     if rank is None:
         rank = min(dense1.num_input_units, dense1.num_output_units)
-    nys = NystromSumLayer(dense1, rank=rank)
+    import inspect
+    if "semiring" in inspect.signature(NystromSumLayer.__init__).parameters:
+        nys = NystromSumLayer(dense1, rank=rank, semiring=dense1.semiring)
+    else:
+        nys = NystromSumLayer(dense1, rank=rank)
     return (nys,)
 
 

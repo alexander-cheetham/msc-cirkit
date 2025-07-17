@@ -1,3 +1,5 @@
+import os, sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 import pytest
 
 try:
@@ -124,3 +126,45 @@ def test_new_faster_than_old():
     t_new = timeit.timeit(lambda: NystromSumLayer(orig, rank=rank), number=3)
     print(f"Old time: {t_old:.6f}s, New time: {t_new:.6f}s")
     assert t_new <= t_old * 1.1
+
+
+@pytest.mark.skipif(TorchSumLayer is None, reason="cirkit library not installed")
+@pytest.mark.parametrize("semiring", ["sum-product", "lse-sum"])
+def test_landmark_indices_match_semiring(semiring):
+    import cirkit.symbolic.functional as SF
+    from src.circuit_types import define_circuit_one_sum
+    from cirkit.pipeline import PipelineContext, compile as compile_circuit
+
+    torch.manual_seed(0)
+    circuit = define_circuit_one_sum(3, 3)
+    circuit = SF.multiply(circuit, circuit)
+    ctx = PipelineContext(backend="torch", semiring=semiring, fold=False, optimize=False)
+    compiled = compile_circuit(circuit, ctx).cpu().eval()
+
+    for m in compiled.modules():
+        if isinstance(m, TorchSumLayer):
+            orig_layer = m
+            break
+
+    rank = 2
+    pivots = [(torch.tensor([0, 2]), torch.tensor([1, 0]))]
+
+    import inspect
+    if "semiring" not in inspect.signature(NystromSumLayer.__init__).parameters:
+        pytest.skip("NystromSumLayer does not support semiring argument")
+    nys = NystromSumLayer(orig_layer, rank=rank, semiring=orig_layer.semiring)
+    nys._build_factors_from(orig_layer, pivots=pivots)
+
+    base = orig_layer.weight._nodes[0]()
+    if semiring == "lse-sum":
+        base = torch.nn.functional.log_softmax(base, dim=-1)
+        def kron_log(M):
+            M = M[0]
+            return (M.unsqueeze(1).unsqueeze(3) + M.unsqueeze(0).unsqueeze(2)).reshape(M.shape[0]**2, M.shape[1]**2)
+        W_full = kron_log(base).unsqueeze(0)
+    else:
+        base = torch.nn.functional.softmax(base, dim=-1)
+        W_full = torch.kron(base[0], base[0]).unsqueeze(0)
+
+    I, J = pivots[0]
+    assert torch.allclose(nys.U[0, :rank], W_full[0][I][:, J], atol=1e-6)

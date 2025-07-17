@@ -97,10 +97,15 @@ def replace_sum_layers(module: nn.Module, *, rank: int) -> None:
     """
     for name, child in list(module.named_children()):             
         if isinstance(child, TorchSumLayer):
-            # swap in-place 
-            setattr(module, name, NystromSumLayer(child, rank=rank))
+            # swap in-place
+            import inspect
+            if "semiring" in inspect.signature(NystromSumLayer.__init__).parameters:
+                new_layer = NystromSumLayer(child, rank=rank, semiring=child.semiring)
+            else:
+                new_layer = NystromSumLayer(child, rank=rank)
+            setattr(module, name, new_layer)
         else:
-            # descend the tree 
+            # descend the tree
             replace_sum_layers(module=child, rank=rank)
 
 def fix_address_book_modules(circuit, verbose=False) -> bool:

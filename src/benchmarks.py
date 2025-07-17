@@ -27,7 +27,7 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None):
     """Compile a symbolic circuit with optional Nyström optimization."""
     ctx = PipelineContext(
         backend="torch",
-        semiring="lse-sum",
+        semiring="complex-lse-sum",
         fold=False,
         optimize=True,
         nystrom_rank=rank,
@@ -268,8 +268,8 @@ class WandbCircuitBenchmark:
 
             # Approximation metrics
             with torch.no_grad():
-                orig_output = original_circuit(test_input)
-                nystrom_output = nystrom_circuit(test_input)
+                orig_output = original_circuit(test_input).real
+                nystrom_output = nystrom_circuit(test_input).real
 
                 # TODO: verify that these formulas for NLL and KL divergence are
                 # consistent with how the circuits represent probabilities. The
