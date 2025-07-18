@@ -20,7 +20,11 @@ from .circuit_types import CIRCUIT_BUILDERS
 from cirkit.symbolic.io import plot_circuit
 import os
 
-wandb.require("legacy-service")
+try:
+    wandb.require("legacy-service")
+except wandb.errors.UnsupportedError:
+    # ignore if the legacy-service requirement isn’t supported
+    pass
 
 
 def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, opt: bool = False):
