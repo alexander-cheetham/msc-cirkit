@@ -4,7 +4,11 @@ import torch
 import tracemalloc
 import numpy as np
 import wandb
-wandb.require("legacy-service")   
+try:
+    wandb.require("legacy-service")
+except wandb.errors.UnsupportedError:
+    # ignore if the legacy-service requirement isn’t supported
+    pass
 
 class WandbMemoryProfiler:
     """Profile memory usage and log to wandb"""
