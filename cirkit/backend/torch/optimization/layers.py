@@ -7,7 +7,7 @@ from cirkit.backend.torch.layers import (
     TorchSumLayer,
     TorchTuckerLayer,
 )
-from nystromlayer import NystromSumLayer
+from src.nystromlayer import NystromSumLayer
 from cirkit.backend.torch.layers.optimized import TorchCPTLayer, TorchTensorDotLayer
 from cirkit.backend.torch.optimization.parameters import KroneckerOutParameterPattern
 from cirkit.backend.torch.optimization.registry import (
