@@ -14,8 +14,8 @@ class BenchmarkConfig:
     
     # Training settings
     batch_sizes: List[int] = field(default_factory=lambda: [32, 64, 128])
-    num_warmup: int = 10
-    num_trials: int = 100
+    num_warmup: int = 2
+    num_trials: int = 20
     
     # Hardware
     device: str = field(default_factory=lambda: 'cuda' if torch.cuda.is_available() else 'cpu')

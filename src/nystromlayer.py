@@ -164,19 +164,11 @@ class NystromSumLayer(TorchSumLayer):
     def forward(self, x: Tensor) -> Tensor:
         # x: (F, H, B, Ki) -> (F, B, H * Ki)
         x = x.permute(0, 2, 1, 3).flatten(start_dim=2)
-        # first multiply by Vᵀ under the semiring
-        temp = self.semiring.einsum(
-            "fbi,fir->fbr",
+        # compute x · Vᵀ · U using a single einsum call under the semiring
+        return self.semiring.einsum(
+            "fbi,fir,for->fbo",
             inputs=(x,),
-            operands=(self.V,),
-            dim=-1,
-            keepdim=True,
-        )
-        # then multiply by U
-        return  self.semiring.einsum(
-            "fbr,for->fbo",
-            inputs=(temp,),
-            operands=(self.U,),
+            operands=(self.V, self.U),
             dim=-1,
             keepdim=True,
         )
