@@ -1,7 +1,7 @@
 from types import MethodType
 from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
-from nystromlayer import NystromSumLayer as SymbolicNystromSumLayer
+from src.nystromlayer import NystromSumLayer as SymbolicNystromSumLayer
 
 def build_circuit_one_sum(
     self,
