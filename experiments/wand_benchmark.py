@@ -4,11 +4,7 @@ import sys
 import os
 import argparse
 
-# Add the ``src`` directory to ``sys.path`` so that this script can be executed
-# without installing the package.  This allows modules such as ``nystromlayer``
-# to be imported correctly when running directly from the repository.
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.join(repo_root, "src"))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import wandb
 from src.config import BenchmarkConfig
