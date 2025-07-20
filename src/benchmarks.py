@@ -2,6 +2,7 @@
 
 import traceback
 import torch
+import torch.nn as nn
 import time
 import numpy as np
 from typing import Dict, List
@@ -208,6 +209,10 @@ class WandbCircuitBenchmark:
             nystrom_circuit = compile_symbolic(
                 symbolic, device=self.config.device, opt=True,rank=rank
             )
+
+            if torch.cuda.device_count() > 1:
+                original_circuit = nn.DataParallel(original_circuit)
+                nystrom_circuit  = nn.DataParallel(nystrom_circuit)
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
