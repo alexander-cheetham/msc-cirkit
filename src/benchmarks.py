@@ -215,7 +215,7 @@ class WandbCircuitBenchmark:
                 nystrom_circuit  = nn.DataParallel(nystrom_circuit)
 
             # Create test input
-            test_input = self.create_test_input(batch_size, n_input, self.config.device)
+            test_input = self.create_test_input(batch_size, n_input, "cpu")
 
             # Time forward passes
             orig_times = self.time_forward_pass(
