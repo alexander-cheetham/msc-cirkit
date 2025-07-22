@@ -53,18 +53,40 @@ class WandbCircuitBenchmark:
         self.config = config
         self.base_symbolic_circuit = base_symbolic_circuit
 
-        # Initialize wandb run
-        self.run = wandb.init(
+        # Determine distributed rank
+        self.rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                self.rank = torch.distributed.get_rank()
+            except RuntimeError:
+                self.rank = 0
+
+        def _wandb_log(data, **kwargs):
+            if self.rank == 0:
+                wandb.log(data, **kwargs)
+
+        def _print_rank0(*args, **kwargs):
+            if self.rank == 0:
+                print(*args, **kwargs)
+
+        self.wandb_log = _wandb_log
+        self.print_rank0 = _print_rank0
+
+        # Initialize wandb run only once; disable on other ranks
+        init_kwargs = dict(
             project=config.project_name,
             name=config.experiment_name,
             tags=config.tags,
             notes=config.notes,
             config=asdict(config),
         )
+        if self.rank != 0:
+            init_kwargs["mode"] = "disabled"
+        self.run = wandb.init(**init_kwargs)
 
         # Log power-of-two configuration if enabled
         if self.config.powers_of_two:
-            wandb.log(
+            self.wandb_log(
                 {
                     "config/min_exp": self.config.min_exp,
                     "config/max_exp": self.config.max_exp,
@@ -104,6 +126,19 @@ class WandbCircuitBenchmark:
             "nll_diffs": [],
             "efficiencies": [],
         }
+
+    def apply_parallel_wrapper(self, model: nn.Module) -> nn.Module:
+        """Wrap model for multi-GPU inference based on config.distributed."""
+        mode = getattr(self.config, "distributed", "none")
+        if mode == "dp" and torch.cuda.device_count() > 1:
+            return nn.DataParallel(model)
+        if mode == "ddp" and torch.distributed.is_available() and torch.distributed.is_initialized():
+            device_ids = [torch.cuda.current_device()] if torch.cuda.is_available() else None
+            return nn.parallel.DistributedDataParallel(model, device_ids=device_ids)
+        if mode == "fsdp" and torch.distributed.is_available() and torch.distributed.is_initialized():
+            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+            return FSDP(model)
+        return model
 
     def create_test_input(self, batch_size: int, input_dim: int, device: str):
         """Create test input tensor with correct shape for circuit."""
@@ -183,7 +218,7 @@ class WandbCircuitBenchmark:
         }
         if depth is not None:
             log_dict["config/depth"] = depth
-        wandb.log(log_dict)
+        self.wandb_log(log_dict)
 
         try:
             # Build symbolic circuit and log its structure
@@ -204,15 +239,14 @@ class WandbCircuitBenchmark:
 
             # Compile baseline and Nyström versions
             original_circuit = compile_symbolic(
-                symbolic, device=self.config.device, rank=None,opt=False
+                symbolic, device=self.config.device, rank=None, opt=False
             )
             nystrom_circuit = compile_symbolic(
-                symbolic, device=self.config.device, opt=True,rank=rank
+                symbolic, device=self.config.device, opt=True, rank=rank
             )
 
-            if torch.cuda.device_count() > 1:
-                original_circuit = nn.DataParallel(original_circuit)
-                nystrom_circuit  = nn.DataParallel(nystrom_circuit)
+            original_circuit = self.apply_parallel_wrapper(original_circuit)
+            nystrom_circuit = self.apply_parallel_wrapper(nystrom_circuit)
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, "cpu")
@@ -233,7 +267,7 @@ class WandbCircuitBenchmark:
             )
 
             # Log timing distributions
-            wandb.log(
+            self.wandb_log(
                 {
                     "timing/original_mean_ms": orig_times["mean"] * 1000,
                     "timing/original_std_ms": orig_times["std"] * 1000,
@@ -250,6 +284,7 @@ class WandbCircuitBenchmark:
                 test_input,
                 device=self.config.device,
                 prefix="memory/original",
+                rank=self.rank,
             )
 
             nystrom_memory = WandbMemoryProfiler.profile_and_log(
@@ -257,6 +292,7 @@ class WandbCircuitBenchmark:
                 test_input,
                 device=self.config.device,
                 prefix="memory/nystrom",
+                rank=self.rank,
             )
 
             # FLOP counting
@@ -266,7 +302,7 @@ class WandbCircuitBenchmark:
                 batch_size, F, n_sum, n_input, rank
             )
 
-            wandb.log(
+            self.wandb_log(
                 {
                     "flops/original_gflops": orig_flops / 1e9,
                     "flops/nystrom_gflops": nystrom_flops / 1e9,
@@ -290,7 +326,7 @@ class WandbCircuitBenchmark:
                 nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
                 nll_diff = nll_diff_per_sample.mean()
 
-                wandb.log(
+                self.wandb_log(
                     {
                         "accuracy/nll_diff": nll_diff.item(),
                         "accuracy/nll_diff_std": nll_diff_per_sample.std().item(),
@@ -334,7 +370,7 @@ class WandbCircuitBenchmark:
             )
 
             # Log efficiency metrics
-            wandb.log(
+            self.wandb_log(
                 {
                     "efficiency/actual_vs_theoretical": efficiency,
                     "efficiency/memory_reduction": memory_reduction,
@@ -356,10 +392,10 @@ class WandbCircuitBenchmark:
 
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
-                print(
+                self.print_rank0(
                     f"  OOM for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}"
                 )
-                wandb.log(
+                self.wandb_log(
                     {
                         "errors/type": "out_of_memory",
                         "errors/message": str(e),
@@ -418,12 +454,12 @@ class WandbCircuitBenchmark:
 
                         for batch_size in self.config.batch_sizes:
                             progress += 1
-                            wandb.log({"progress": progress / total_configs})
+                            self.wandb_log({"progress": progress / total_configs})
 
-                            print(
+                            self.print_rank0(
                                 f"[{progress}/{total_configs}] Benchmarking: depth={depth}, "
                                 f"input={n_input}, sum={n_sum}, "
-                                f"rank={rank}, batch={batch_size}"
+                                f"nystrom_rank={rank}, batch={batch_size}, gpu_rank={self.rank}"
                             )
 
                             try:
@@ -450,20 +486,21 @@ class WandbCircuitBenchmark:
                                     step += 1
 
                             except Exception as e:
-                                print(f"  Failed: {e}")
+                                self.print_rank0(f"  Failed: {e}")
                                 tb_str = traceback.format_exc()
-                                print(f"Error details:\n{tb_str}")
-                                wandb.log({"errors/count": 1, "errors/message": str(e)})
+                                self.print_rank0(f"Error details:\n{tb_str}")
+                                self.wandb_log({"errors/count": 1, "errors/message": str(e)})
                                 continue
 
         # Log final summary statistics
         self.log_summary_statistics()
 
         # Log results table
-        wandb.log({"results_table": self.results_table})
+        self.wandb_log({"results_table": self.results_table})
 
         # Create and log visualizations
-        create_wandb_visualisations(self.results_table, self.config)
+        if self.rank == 0:
+            create_wandb_visualisations(self.results_table, self.config)
 
         return self.results_table
 
@@ -490,4 +527,4 @@ class WandbCircuitBenchmark:
             best_speedup_good_accuracy = speedups[good_accuracy_mask].max()
             summary["summary/best_speedup_low_nll"] = best_speedup_good_accuracy
 
-        wandb.log(summary)
+        self.wandb_log(summary)

@@ -62,7 +62,7 @@ class WandbMemoryProfiler:
         return peak_mb, stats
     
     @classmethod
-    def profile_and_log(cls, func, *args, device='cuda', prefix="", **kwargs):
+    def profile_and_log(cls, func, *args, device='cuda', prefix="", rank=0, **kwargs):
         """Profile and log to wandb with prefix"""
         if device == 'cuda' and torch.cuda.is_available():
             peak, stats = cls.profile_gpu(func, *args, **kwargs)
@@ -71,7 +71,8 @@ class WandbMemoryProfiler:
         
         # Log to wandb with prefix
         wandb_stats = {f"{prefix}/{k}": v for k, v in stats.items()}
-        wandb.log(wandb_stats)
+        if rank == 0:
+            wandb.log(wandb_stats)
         
         return peak
 class FLOPCounter:
