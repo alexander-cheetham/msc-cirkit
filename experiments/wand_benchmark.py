@@ -7,6 +7,7 @@ import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import wandb
+import torch
 from src.config import BenchmarkConfig
 from src.benchmarks import WandbCircuitBenchmark
 from src.circuit_types import CIRCUIT_BUILDERS
@@ -51,6 +52,12 @@ def main():
         default="quad-tree-4",
         help="Region graph to use for MNIST circuits",
     )
+    parser.add_argument(
+        "--distributed",
+        choices=["none", "dp", "ddp", "fsdp"],
+        default="none",
+        help="Parallel backend: none, dp, ddp or fsdp",
+    )
 
     args = parser.parse_args()
     
@@ -94,6 +101,7 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            distributed=args.distributed,
         )
     else:
         config = BenchmarkConfig(
@@ -109,8 +117,17 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            distributed=args.distributed,
         )
     
+    if config.distributed in {"ddp", "fsdp"}:
+        import torch.distributed as dist
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+        if torch.cuda.is_available():
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            torch.cuda.set_device(local_rank)
+
     print(f"Starting wandb experiment on {config.device}")
     # Build the symbolic circuit once using the selected builder.
     builder = CIRCUIT_BUILDERS[config.circuit_structure]
@@ -140,6 +157,10 @@ def main():
     
     # wandb.log_artifact(artifact)
     wandb.finish()
+    if config.distributed in {"ddp", "fsdp"}:
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()

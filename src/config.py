@@ -42,3 +42,7 @@ class BenchmarkConfig:
         default=None,
         metadata={"help": "Region graph for MNIST circuits"},
     )
+    distributed: str = field(
+        default="none",
+        metadata={"help": "Parallel backend: none, dp, ddp, fsdp"},
+    )
