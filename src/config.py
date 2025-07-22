@@ -46,3 +46,7 @@ class BenchmarkConfig:
         default="none",
         metadata={"help": "Parallel backend: none, dp, ddp, fsdp"},
     )
+    local_rank: int = field(
+        default=0,
+        metadata={"help": "Local rank for distributed execution"},
+    )

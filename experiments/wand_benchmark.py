@@ -61,6 +61,8 @@ def main():
 
     args = parser.parse_args()
     
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    print(f"[launch] local_rank={local_rank}")
     # config = BenchmarkConfig(
     #     input_units=[10, 20, 30, 40],
     #     sum_units=[10, 20, 30, 40],
@@ -102,6 +104,7 @@ def main():
             depth=args.depth,
             region_graph=args.region_graph,
             distributed=args.distributed,
+            local_rank=local_rank,
         )
     else:
         config = BenchmarkConfig(
@@ -118,6 +121,7 @@ def main():
             depth=args.depth,
             region_graph=args.region_graph,
             distributed=args.distributed,
+            local_rank=local_rank,
         )
     
     if config.distributed in {"ddp", "fsdp"}:
@@ -125,8 +129,13 @@ def main():
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         dist.init_process_group(backend=backend)
         if torch.cuda.is_available():
-            local_rank = int(os.environ.get("LOCAL_RANK", 0))
             torch.cuda.set_device(local_rank)
+            rank = dist.get_rank()
+        device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+        print(f"[setup] backend={config.distributed} rank={rank} device={device}")
+    else:
+        device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+        print(f"[setup] running without distributed on device {device}")
 
     print(f"Starting wandb experiment on {config.device}")
     # Build the symbolic circuit once using the selected builder.

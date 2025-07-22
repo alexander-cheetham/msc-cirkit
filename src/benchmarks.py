@@ -54,13 +54,15 @@ class WandbCircuitBenchmark:
         self.base_symbolic_circuit = base_symbolic_circuit
 
         # Determine distributed rank
-        self.rank = 0
+        self.rank = getattr(config, "local_rank", 0)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             try:
                 self.rank = torch.distributed.get_rank()
             except RuntimeError:
-                self.rank = 0
-
+                print("Warning: could not determine distributed rank")
+        device_idx = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+        print(f"[init] Device {device_idx}, rank {self.rank}")
+        
         def _wandb_log(data, **kwargs):
             if self.rank == 0:
                 wandb.log(data, **kwargs)
