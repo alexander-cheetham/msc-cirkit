@@ -215,7 +215,7 @@ class WandbCircuitBenchmark:
                 nystrom_circuit  = nn.DataParallel(nystrom_circuit)
 
             # Create test input
-            test_input = self.create_test_input(batch_size, n_input, "cpu")
+            test_input = self.create_test_input(batch_size, n_input, self.config.device)
 
             # Time forward passes
             orig_times = self.time_forward_pass(
@@ -359,6 +359,7 @@ class WandbCircuitBenchmark:
                 print(
                     f"  OOM for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}"
                 )
+                print(f"Error: {e}")
                 wandb.log(
                     {
                         "errors/type": "out_of_memory",
