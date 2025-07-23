@@ -23,27 +23,54 @@ def plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs):
 
 
 def plot_error_vs_rank(n_inputs, ranks, rel_errors, unique_n_inputs, error_label):
-    """Plot approximation error against rank."""
+    """Plot mean approximation error vs rank with 95% CI shaded."""
     fig = plt.figure(figsize=(10, 6))
+
     for n in unique_n_inputs:
         mask = n_inputs == n
-        n_ranks = ranks[mask]
+        r = ranks[mask]
+        e = rel_errors[mask]
 
-        n_errors = rel_errors[mask]
-        sort_idx = np.argsort(n_ranks)
-        n_ranks_sorted = n_ranks[sort_idx]
-        n_errors_sorted = n_errors[sort_idx]
-        plt.semilogy(
-            n_ranks_sorted, n_errors_sorted, "o-", label=f"n={n}", markersize=8
-        )
+        uniq_r = np.unique(r)
+        means, lows, highs = [], [], []
+
+        for ur in uniq_r:
+            errs = e[r == ur]
+            m = errs.mean()
+            # standard error; protect against single sample
+            if errs.size > 1:
+                se = errs.std(ddof=1) / np.sqrt(errs.size)
+            else:
+                se = 0.0
+            delta = 1.96 * se
+            means.append(m)
+            lows.append(max(m - delta, np.finfo(float).tiny))  # avoid 0 on log-scale
+            highs.append(m + delta)
+
+        means = np.array(means)
+        lows = np.array(lows)
+        highs = np.array(highs)
+
+        # Sort by rank for plotting
+        sort_idx = np.argsort(uniq_r)
+        x = uniq_r[sort_idx]
+        y = means[sort_idx]
+        y_low = lows[sort_idx]
+        y_high = highs[sort_idx]
+
+        plt.semilogy(x, y, "o-", markersize=6, label=f"{n}")
+        plt.fill_between(x, y_low, y_high, alpha=0.2)
+
     plt.xlabel("Rank")
-
     plt.ylabel(error_label)
     plt.title("Approximation Error vs Rank")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    leg = plt.legend(title="n_inputs/n_sums")
+    leg._legend_box.align = "left"  # optional: left-align legend entries
+    plt.grid(True, which="both", alpha=0.3)
+
     wandb.log({"charts/error_vs_rank": wandb.Image(fig)})
     plt.close()
+
 
 
 def plot_tradeoff(speedups, rel_errors, ranks, error_label):

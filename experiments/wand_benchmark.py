@@ -51,6 +51,13 @@ def main():
         default="quad-tree-4",
         help="Region graph to use for MNIST circuits",
     )
+    parser.add_argument(
+        "--no-dynamic-ranks",
+        dest="use_dynamic_ranks",
+        action="store_false",
+        help="Disable dynamic rank selection (use static ranks)",
+    )
+    parser.set_defaults(use_dynamic_ranks=True)
 
     args = parser.parse_args()
     
@@ -84,7 +91,7 @@ def main():
         config = BenchmarkConfig(
             input_units=units,
             sum_units=units,
-            ranks=[50, 100, 200, 400, 600, 2000, 5000, 10000, 20000],
+            ranks=[50, 100, 200, 400, 600, 2000,3200, 5000, 10000, 20000],
             batch_sizes=[256, 512],
             project_name="kronecker-vs-nystrom",
             experiment_name="full_benchmark_pow2",
@@ -97,8 +104,8 @@ def main():
         )
     else:
         config = BenchmarkConfig(
-            input_units=[50, 70, 100, 120, 200],
-            sum_units=[50, 70, 100, 120, 200],
+            input_units=[20, 50, 70, 100, 120,],
+            sum_units=[20, 50, 70, 100, 120,],
             ranks=[50, 100, 200, 400, 600, 2000, 5000, 10000, 20000],
             batch_sizes=[256, 512],
             project_name="kronecker-vs-nystrom",

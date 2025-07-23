@@ -105,6 +105,14 @@ class WandbCircuitBenchmark:
             "efficiencies": [],
         }
 
+    def compute_dynamic_ranks(self, n_input: int, n_sum: int) -> List[int]:
+        """Compute ranks as percentages of the squared dimension."""
+        base_units = min(n_input, n_sum)
+        base = base_units ** 2
+        percentages = self.config.rank_percentages
+        ranks = [max(1, int(base * p)) for p in percentages]
+        return sorted(set(ranks))
+
     def create_test_input(self, batch_size: int, input_dim: int, device: str):
         """Create test input tensor with correct shape for circuit."""
         # For squared circuit: num_variables = input_dim^2
@@ -396,9 +404,14 @@ class WandbCircuitBenchmark:
         for depth in depth_range:
             for n_input in self.config.input_units:
                 for n_sum in self.config.sum_units:
-                    if self.config.powers_of_two and n_input != n_sum:
+                    if n_input != n_sum:
                         continue
-                    for rank in self.config.ranks:
+                    ranks_to_use = (
+                        self.compute_dynamic_ranks(n_input, n_sum)
+                        if self.config.use_dynamic_ranks
+                        else self.config.ranks
+                    )
+                    for rank in ranks_to_use:
                         if rank >= min(n_input**2, n_sum**2):
                             continue
                         total_configs += len(self.config.batch_sizes)
@@ -410,9 +423,14 @@ class WandbCircuitBenchmark:
             for n_input in self.config.input_units:
                 for n_sum in self.config.sum_units:
                     # When powers-of-two mode is active, only benchmark square matrices
-                    if self.config.powers_of_two and n_input != n_sum:
+                    if n_input != n_sum:
                         continue
-                    for rank in self.config.ranks:
+                    ranks_to_use = (
+                        self.compute_dynamic_ranks(n_input, n_sum)
+                        if self.config.use_dynamic_ranks
+                        else self.config.ranks
+                    )
+                    for rank in ranks_to_use:
                         # Skip if rank too large
                         if rank >= min(n_input**2, n_sum**2):
                             continue
