@@ -128,6 +128,14 @@ class WandbCircuitBenchmark:
             "nll_diffs": [],
             "efficiencies": [],
         }
+        self.world_size = (torch.distributed.get_world_size() if torch.distributed.is_available() and torch.distributed.is_initialized() else 1 )
+        print(f"[init] World size: {self.world_size}")
+
+    def _ddp_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM):
+        if self.world_size > 1:
+            torch.distributed.all_reduce(tensor, op=op)
+        return tensor
+
 
     def apply_parallel_wrapper(self, model: nn.Module) -> nn.Module:
         """Wrap model for multi-GPU inference based on config.distributed."""
@@ -146,6 +154,9 @@ class WandbCircuitBenchmark:
         """Create test input tensor with correct shape for circuit."""
         # For squared circuit: num_variables = input_dim^2
         num_variables = input_dim**2
+        local_bs = batch_size // self.world_size
+        if self.rank < (batch_size % self.world_size):
+            local_bs += 1
         if self.config.circuit_structure == "MNIST":
             # MNIST circuits use categorical input layers expecting discrete
             # pixel values in the range [0, 255]. ``torch.randn`` would
@@ -154,8 +165,8 @@ class WandbCircuitBenchmark:
             # categories, triggering CUDA index errors.  ``torch.randint``
             # ensures values fall within the valid range.
             num_variables = 784
-            return torch.randint(0, 256, (batch_size, num_variables), device=device)
-        return torch.randn(batch_size, num_variables, device=device)
+            return torch.randint(0, 256, (local_bs, num_variables), device=device)
+        return torch.randn(local_bs, num_variables, device=device)
 
     def time_forward_pass(self, circuit, test_input, num_warmup=10, num_trials=100):
         """Time forward pass with wandb logging"""
@@ -180,13 +191,52 @@ class WandbCircuitBenchmark:
             times.append(end - start)
 
         times = np.array(times)
-        return {
-            "mean": times.mean(),
-            "std": times.std(),
-            "min": times.min(),
-            "max": times.max(),
-            "median": np.median(times),
-        }
+        # ----------------------------------------------------------
+        # One tensor, two collective ops
+        # [0] sum, [1] sq_sum, [2] min, [3] max, [4] count
+        # ----------------------------------------------------------
+        t = torch.tensor(
+            [
+                times.sum(),
+                (times ** 2).sum(),
+                times.min(),
+                times.max(),
+                len(times),
+            ],
+            device=self.config.device,
+        )
+
+        # Global sum (elements 0,1,4)
+        self._ddp_reduce(t, op=torch.distributed.ReduceOp.SUM)
+        # Global min / max for elements 2,3
+        minmax = t[2:4].clone()
+        self._ddp_reduce(minmax, op=torch.distributed.ReduceOp.MIN)
+        t[2] = minmax[0]                      # global min
+        self._ddp_reduce(minmax, op=torch.distributed.ReduceOp.MAX)
+        t[3] = minmax[1]                      # global max
+
+        # ----------------------------------------------------------
+        # Rank‑0 builds the stats dict
+        # ----------------------------------------------------------
+        if self.rank == 0:
+            tot_samples = t[4].item()
+            mean   = t[0].item() / tot_samples
+            var    = t[1].item() / tot_samples - mean ** 2
+            std    = max(var, 0.0) ** 0.5
+            stats  = dict(
+                mean   = mean,
+                std    = std,
+                min    = t[2].item(),
+                max    = t[3].item(),
+                median = None,          # see note below
+            )
+            return stats
+
+        # Other ranks can skip returning or return an empty dict
+        return {}
+    def _print_all(self, *args, **kwargs):
+            """A temporary debug function to print from all ranks."""
+            print(f"[Rank {self.rank}]", *args, **kwargs)
 
     def benchmark_single_configuration(
         self,
@@ -252,6 +302,7 @@ class WandbCircuitBenchmark:
 
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, "cpu")
+            self._print_all(f"created test input: {test_input.shape}")
 
             # Time forward passes
             orig_times = self.time_forward_pass(
@@ -267,19 +318,22 @@ class WandbCircuitBenchmark:
                 self.config.num_warmup,
                 self.config.num_trials,
             )
+            print(f"finished timing: ")
 
             # Log timing distributions
-            self.wandb_log(
-                {
-                    "timing/original_mean_ms": orig_times["mean"] * 1000,
-                    "timing/original_std_ms": orig_times["std"] * 1000,
-                    "timing/nystrom_mean_ms": nystrom_times["mean"] * 1000,
-                    "timing/nystrom_std_ms": nystrom_times["std"] * 1000,
-                    "timing/speedup": orig_times["mean"] / nystrom_times["mean"],
-                    "step": step,
-                }
-            )
-
+            if self.rank == 0:
+                self.wandb_log(
+                    {
+                        "timing/original_mean_ms": orig_times["mean"] * 1000,
+                        "timing/original_std_ms": orig_times["std"] * 1000,
+                        "timing/nystrom_mean_ms": nystrom_times["mean"] * 1000,
+                        "timing/nystrom_std_ms": nystrom_times["std"] * 1000,
+                        "timing/speedup": orig_times["mean"] / nystrom_times["mean"],
+                        "step": step,
+                    }
+                )
+            print(f"logged timing: ")
+            torch.distributed.barrier()  # Ensure all ranks are synchronized before memory profiling
             # Memory profiling with wandb logging
             orig_memory = WandbMemoryProfiler.profile_and_log(
                 original_circuit,
@@ -296,25 +350,26 @@ class WandbCircuitBenchmark:
                 prefix="memory/nystrom",
                 rank=self.rank,
             )
-
+            print(f"logged memory: ")
             # FLOP counting
             F = 1  # Number of folds
             orig_flops = FLOPCounter.kronecker_forward(batch_size, F, n_sum, n_input)
             nystrom_flops = FLOPCounter.nystrom_forward(
                 batch_size, F, n_sum, n_input, rank
             )
-
-            self.wandb_log(
-                {
-                    "flops/original_gflops": orig_flops / 1e9,
-                    "flops/nystrom_gflops": nystrom_flops / 1e9,
-                    "flops/reduction": 1 - (nystrom_flops / orig_flops),
-                    "step": step,
-                }
-            )
+            if self.rank == 0:
+                self.wandb_log(
+                    {
+                        "flops/original_flops": orig_flops / 1e9,
+                        "flops/nystrom_flops": nystrom_flops / 1e9,
+                        "flops/speedup": orig_flops / nystrom_flops,
+                        "step": step,
+                    }
+                )
 
             # Approximation metrics
             with torch.no_grad():
+                print(f"running accuracy metrics: ")
                 orig_output = original_circuit(test_input).real
                 nystrom_output = nystrom_circuit(test_input).real
 
@@ -323,99 +378,154 @@ class WandbCircuitBenchmark:
                 # current implementation assumes the circuit outputs log
                 # likelihoods for each sample.
 
-                nll_orig = -orig_output
-                nll_nystrom = -nystrom_output
-                nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
-                nll_diff = nll_diff_per_sample.mean()
+                # ----------------------------------------------------------------------
+                # 1.  Compute the per‑sample absolute NLL difference on *each* rank
+                # ----------------------------------------------------------------------
+                nll_orig   = -orig_output
+                nll_nys    = -nystrom_output
+                diff       = (nll_nys - nll_orig).abs()         # (local_bs,)
 
-                self.wandb_log(
-                    {
-                        "accuracy/nll_diff": nll_diff.item(),
-                        "accuracy/nll_diff_std": nll_diff_per_sample.std().item(),
-                        "accuracy/nll_max": nll_diff_per_sample.max().item(),
-                        "step": step,
-                    }
+                # local statistics
+                local_sum   = diff.sum()
+                local_sumsq = (diff ** 2).sum()
+                local_max   = diff.max()
+                local_cnt   = torch.tensor(diff.numel(), device=diff.device)
+
+                # ----------------------------------------------------------------------
+                # 2.  Pack into one tensor and run the reductions
+                #     [0]=Σ x,  [1]=Σ x²,  [2]=dummy (max handled separately),  [3]=count
+                # ----------------------------------------------------------------------
+                print(f"running DDP reductions: ")
+                stats = torch.stack(
+                    [local_sum, local_sumsq, torch.tensor(0.0, device=diff.device), local_cnt]
                 )
 
-            # Calculate all metrics
-            speedup = orig_times["mean"] / nystrom_times["mean"]
-            theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
-            memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
-            efficiency = speedup / theoretical_speedup
+                # global sums
+                self._ddp_reduce(stats, op=torch.distributed.ReduceOp.SUM)
 
-            # Update summary metrics
-            self.summary_metrics["speedups"].append(speedup)
-            self.summary_metrics["memory_reductions"].append(memory_reduction)
-            self.summary_metrics["nll_diffs"].append(nll_diff.item())
-            self.summary_metrics["efficiencies"].append(efficiency)
+                # global max (needs its own MAX reduction)
+                global_max = local_max.clone()
+                self._ddp_reduce(global_max, op=torch.distributed.ReduceOp.MAX)
 
-            # Add row to results table
-            self.results_table.add_data(
-                depth if depth is not None else self.config.depth,
-                n_input,
-                n_sum,
-                rank,
-                batch_size,
-                matrix_label,
-                orig_times["mean"] * 1000,
-                nystrom_times["mean"] * 1000,
-                speedup,
-                theoretical_speedup,
-                orig_memory,
-                nystrom_memory,
-                memory_reduction,
-                orig_flops / 1e9,
-                nystrom_flops / 1e9,
-                1 - (nystrom_flops / orig_flops),
-                nll_diff.item(),
-                efficiency,
+                # ----------------------------------------------------------------------
+                # 3.  Rank 0 derives mean / std and logs to W&B
+                # ----------------------------------------------------------------------
+                if self.rank == 0:
+                    global_sum, global_sumsq, _, global_cnt = stats
+                    mean = global_sum / global_cnt
+                    var  = global_sumsq / global_cnt - mean ** 2
+                    std  = var.clamp_min(0).sqrt()          # numerical safety
+
+                    self.wandb_log(
+                        {
+                            "accuracy/nll_diff":      mean.item(),
+                            "accuracy/nll_diff_std":  std.item(),
+                            "accuracy/nll_max":       global_max.item(),
+                            "step":                   step,
+                        }
+                    )
+
+                    # For later summary metrics
+                    nll_diff = mean                        # Tensor -> scalar
+                            # Calculate all metrics
+                    speedup = orig_times["mean"] / nystrom_times["mean"]
+                    theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
+                    memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
+                    efficiency = speedup / theoretical_speedup
+
+                    # Update summary metrics
+                    self.summary_metrics["speedups"].append(speedup)
+                    self.summary_metrics["memory_reductions"].append(memory_reduction)
+                    self.summary_metrics["nll_diffs"].append(nll_diff.item())
+                    self.summary_metrics["efficiencies"].append(efficiency)
+
+                    # Add row to results table
+                    self.results_table.add_data(
+                        depth if depth is not None else self.config.depth,
+                        n_input,
+                        n_sum,
+                        rank,
+                        batch_size,
+                        matrix_label,
+                        orig_times["mean"] * 1000,
+                        nystrom_times["mean"] * 1000,
+                        speedup,
+                        theoretical_speedup,
+                        orig_memory,
+                        nystrom_memory,
+                        memory_reduction,
+                        orig_flops / 1e9,
+                        nystrom_flops / 1e9,
+                        1 - (nystrom_flops / orig_flops),
+                        nll_diff.item(),
+                        efficiency,
+                    )
+
+                    # Log efficiency metrics
+                    self.wandb_log(
+                        {
+                            "efficiency/actual_vs_theoretical": efficiency,
+                            "efficiency/memory_reduction": memory_reduction,
+                            "efficiency/speedup": speedup,
+                            "step": step,
+                        }
+                    )
+                    return_dict = [{
+                        "depth": depth if depth is not None else self.config.depth,
+                        "n_input": n_input,
+                        "n_sum": n_sum,
+                        "rank": rank,
+                        "batch_size": batch_size,
+                        "speedup": speedup,
+                        "memory_reduction": memory_reduction,
+                        "nll_diff": nll_diff.item(),
+                        "efficiency": efficiency,
+                    }]
+                    
+                else:
+                    # keep shapes consistent even on non‑zero ranks
+                    nll_diff = (local_sum / local_cnt)
+
+                    return_dict = [None] 
+                
+                if self.world_size > 1:
+                    torch.distributed.broadcast_object_list(return_dict, src=0)
+
+                return return_dict[0]
+                
+
+            
+        
+
+        except Exception as e:
+            msg = str(e)
+            err_type = "out_of_memory" if "out of memory" in msg.lower() else type(e).__name__
+
+            # THIS IS THE CRUCIAL DEBUGGING STEP
+            self._print_all(
+                f"  CAUGHT EXCEPTION: type={err_type} for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}"
             )
+            self._print_all(f"Error details:\n{traceback.format_exc()}") # Print the full traceback
 
-            # Log efficiency metrics
+
             self.wandb_log(
                 {
-                    "efficiency/actual_vs_theoretical": efficiency,
-                    "efficiency/memory_reduction": memory_reduction,
-                    "efficiency/speedup": speedup,
+                    "errors/type": err_type,
+                    "errors/message": msg,
+                    "config/n_input": n_input,
+                    "config/n_sum": n_sum,
+                    "config/rank": rank,
+                    "config/batch_size": batch_size,
+                    "config/depth": depth if depth is not None else self.config.depth,
                     "step": step,
                 }
             )
-            return {
-                "depth": depth if depth is not None else self.config.depth,
-                "n_input": n_input,
-                "n_sum": n_sum,
-                "rank": rank,
-                "batch_size": batch_size,
-                "speedup": speedup,
-                "memory_reduction": memory_reduction,
-                "nll_diff": nll_diff.item(),
-                "efficiency": efficiency,
-            }
 
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                self.print_rank0(
-                    f"  OOM for input={n_input}, sum={n_sum}, rank={rank}, batch={batch_size}"
-                )
-                self.wandb_log(
-                    {
-                        "errors/type": "out_of_memory",
-                        "errors/message": str(e),
-                        "config/n_input": n_input,
-                        "config/n_sum": n_sum,
-                        "config/rank": rank,
-                        "config/batch_size": batch_size,
-                        "config/depth": (
-                            depth if depth is not None else self.config.depth
-                        ),
-                        "step": step,
-                    }
-                )
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                return None
-            else:
-                raise
+            if err_type == "out_of_memory" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            return None
+
 
     def run_full_benchmark(self):
         """Run complete benchmark suite with wandb tracking"""

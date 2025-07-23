@@ -3,7 +3,9 @@
 import torch
 import tracemalloc
 import numpy as np
+import torch.distributed as dist
 import wandb
+import os
 try:
     wandb.require("legacy-service")
 except wandb.errors.UnsupportedError:
@@ -13,36 +15,43 @@ except wandb.errors.UnsupportedError:
 class WandbMemoryProfiler:
     """Profile memory usage and log to wandb"""
     
-    @staticmethod
+
     def profile_gpu(func, *args, **kwargs):
         if not torch.cuda.is_available():
             return 0, {}
-        
+
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        
-        # Get initial memory
-        initial_memory = torch.cuda.memory_allocated() / (1024**2)
-        
-        # Run function
+
+        initial_mb = torch.cuda.memory_allocated() / (1024**2)
+
+        # Run and sync
         result = func(*args, **kwargs)
-        
-        # Force synchronization
-        if isinstance(result, torch.Tensor) and result.is_cuda:
-            torch.cuda.synchronize()
-        
-        # Get memory stats
-        peak_memory = torch.cuda.max_memory_allocated() / (1024**2)
-        current_memory = torch.cuda.memory_allocated() / (1024**2)
-        
-        stats = {
-            "initial_memory_mb": initial_memory,
-            "peak_memory_mb": peak_memory,
-            "current_memory_mb": current_memory,
-            "memory_increase_mb": peak_memory - initial_memory
-        }
-        
-        return peak_memory, stats
+        torch.cuda.synchronize()
+
+        peak_mb    = torch.cuda.max_memory_allocated() / (1024**2)
+        current_mb = torch.cuda.memory_allocated() / (1024**2)
+
+        # Build tensor on ALL ranks with identical dtype/shape
+        dist.barrier()
+        t = torch.tensor([initial_mb, peak_mb, current_mb],
+                        device='cuda', dtype=torch.float32)
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            # everyone participates, but only rank0 cares about the value
+            torch.distributed.reduce(t, dst=0, op=torch.distributed.ReduceOp.MAX)
+            torch.distributed.barrier()
+
+        if int(os.environ.get("LOCAL_RANK", 0)) == 0:
+            stats = {
+                "initial_memory_mb":  t[0].item(),
+                "peak_memory_mb":     t[1].item(),
+                "current_memory_mb":  t[2].item(),
+                "memory_increase_mb": t[1].item() - t[0].item(),
+            }
+            return t[1].item(), stats
+
+        return 0, {}
     
     @staticmethod
     def profile_cpu(func, *args, **kwargs):
