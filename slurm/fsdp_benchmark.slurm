@@ -2,7 +2,7 @@
 #SBATCH --job-name=fsdp-benchmark
 #SBATCH --partition=gpu
 #SBATCH --qos=gpu
-#SBATCH --gres=gpu:2            # request 2 GPUs
+#SBATCH --gres=gpu:4            # request 2 GPUs
 #SBATCH --account=tc067-s2638244
 #SBATCH --time=01:30:00
 #SBATCH --account=tc067-s2638244
@@ -49,10 +49,10 @@ export WANDB_API_KEY=XXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 srun -n 1 torchrun \
   --standalone \
   --nnodes=1 \
-  --nproc_per_node=2 \
+  --nproc_per_node=4 \
   experiments/wand_benchmark.py \
-    --distributed fsdp \
+    --distributed ddp \
     --powers-of-two \
-    --min-exp 5 --max-exp 7 \
+    --min-exp 2 --max-exp 6 \
     --circuit-structure deep_cp_circuit \
     --depth 5
