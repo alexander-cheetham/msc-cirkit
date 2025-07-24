@@ -14,6 +14,8 @@ from .visualisation import create_wandb_visualisations
 from dataclasses import asdict
 import matplotlib.pyplot as plt
 import wandb
+from cirkit.backend.torch.layers.inner import TorchSumLayer
+from src.nystromlayer import NystromSumLayer
 from cirkit.pipeline import PipelineContext, compile as compile_circuit
 from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
@@ -41,6 +43,16 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, 
     )
     compiled = compile_circuit(circuit, ctx, nystrom_rank=rank).to(device).eval()
     return compiled
+
+
+def sync_sumlayer_weights(original: nn.Module, nystrom: nn.Module) -> None:
+    """Copy weights from ``original`` to ``nystrom`` for matching layers."""
+    orig_layers = [m for m in original.modules() if isinstance(m, TorchSumLayer)]
+    nys_layers = [m for m in nystrom.modules() if isinstance(m, NystromSumLayer)]
+    if len(orig_layers) != len(nys_layers):
+        raise ValueError("Layer count mismatch when syncing weights")
+    for o, n in zip(orig_layers, nys_layers):
+        n._build_factors_from(o)
 
 
 class WandbCircuitBenchmark:
@@ -223,6 +235,9 @@ class WandbCircuitBenchmark:
             nystrom_circuit = compile_symbolic(
                 symbolic, device=self.config.device, opt=True,rank=rank
             )
+
+            # Ensure Nyström layers approximate the same weights
+            sync_sumlayer_weights(original_circuit, nystrom_circuit)
 
             if torch.cuda.device_count() > 1:
                 original_circuit = nn.DataParallel(original_circuit)

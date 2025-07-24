@@ -192,6 +192,15 @@ class NystromSumLayer(TorchSumLayer):
             # compute required sub-blocks without building the full product.
             if hasattr(original_layer.weight, "_nodes"):
                 base_weight = original_layer.weight._nodes[0]()
+                base_weight = torch.nn.functional.softmax(
+                    base_weight, dim=-1
+                )  # ensure probabilities sum to 1
+                # assert torch.equal(
+                #     torch.kron(base_weight, base_weight),
+                #     original_layer.weight()
+                # ), "Weight tensors differ!" 
+
+                # print(f"kronecker of base weight matches materialised ORIGINAL CIRCUIT")
             else:
                 base_weight = original_layer.weight()
             # Prepare weights depending on the semiring. For log-space
