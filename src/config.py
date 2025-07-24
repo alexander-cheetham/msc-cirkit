@@ -1,5 +1,6 @@
 """Configuration classes for benchmarking experiments."""
 
+import socket
 import torch
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -29,6 +30,10 @@ class BenchmarkConfig:
     experiment_name: str = "benchmark"
     tags: List[str] = field(default_factory=lambda: ["benchmark", "nystrom", "kronecker"])
     notes: str = "Comparing Kronecker product vs Nyström approximation in squared circuits"
+    hostname: str = field(
+        default_factory=socket.gethostname,
+        metadata={"help": "Hostname of the machine running the benchmark"},
+    )
 
     # Optional power-of-two configuration
     powers_of_two: bool = False
