@@ -19,6 +19,8 @@ from cirkit.symbolic.circuit import Circuit
 import cirkit.symbolic.functional as SF
 from .circuit_types import CIRCUIT_BUILDERS
 from cirkit.symbolic.io import plot_circuit
+
+LN2 = np.log(2.0)
 import os
 
 try:
@@ -92,6 +94,9 @@ class WandbCircuitBenchmark:
                 "orig_gflops",
                 "nystrom_gflops",
                 "flop_reduction",
+                "orig_bpd",
+                "nystrom_bpd",
+                "bpd_diff",
                 "nll_diff",
                 "efficiency",
             ]
@@ -103,6 +108,7 @@ class WandbCircuitBenchmark:
             "memory_reductions": [],
             "nll_diffs": [],
             "efficiencies": [],
+            "bpd_diffs": [],
         }
 
     def compute_dynamic_ranks(self, n_input: int, n_sum: int) -> List[int]:
@@ -298,11 +304,19 @@ class WandbCircuitBenchmark:
                 nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
                 nll_diff = nll_diff_per_sample.mean()
 
+                data_dim = test_input.shape[1]
+                orig_bpd = (-orig_output.mean() / (data_dim * LN2)).item()
+                nystrom_bpd = (-nystrom_output.mean() / (data_dim * LN2)).item()
+                bpd_diff = abs(orig_bpd - nystrom_bpd)
+
                 wandb.log(
                     {
                         "accuracy/nll_diff": nll_diff.item(),
                         "accuracy/nll_diff_std": nll_diff_per_sample.std().item(),
                         "accuracy/nll_max": nll_diff_per_sample.max().item(),
+                        "bpd/original": orig_bpd,
+                        "bpd/nystrom": nystrom_bpd,
+                        "bpd/diff": bpd_diff,
                         "step": step,
                     }
                 )
@@ -318,6 +332,7 @@ class WandbCircuitBenchmark:
             self.summary_metrics["memory_reductions"].append(memory_reduction)
             self.summary_metrics["nll_diffs"].append(nll_diff.item())
             self.summary_metrics["efficiencies"].append(efficiency)
+            self.summary_metrics["bpd_diffs"].append(bpd_diff)
 
             # Add row to results table
             self.results_table.add_data(
@@ -337,6 +352,9 @@ class WandbCircuitBenchmark:
                 orig_flops / 1e9,
                 nystrom_flops / 1e9,
                 1 - (nystrom_flops / orig_flops),
+                orig_bpd,
+                nystrom_bpd,
+                bpd_diff,
                 nll_diff.item(),
                 efficiency,
             )
@@ -358,6 +376,9 @@ class WandbCircuitBenchmark:
                 "batch_size": batch_size,
                 "speedup": speedup,
                 "memory_reduction": memory_reduction,
+                "orig_bpd": orig_bpd,
+                "nystrom_bpd": nystrom_bpd,
+                "bpd_diff": bpd_diff,
                 "nll_diff": nll_diff.item(),
                 "efficiency": efficiency,
             }
@@ -497,6 +518,7 @@ class WandbCircuitBenchmark:
             ),
             "summary/avg_nll_diff": np.mean(self.summary_metrics["nll_diffs"]),
             "summary/avg_efficiency": np.mean(self.summary_metrics["efficiencies"]),
+            "summary/avg_bpd_diff": np.mean(self.summary_metrics["bpd_diffs"]),
         }
 
         # Find best configurations

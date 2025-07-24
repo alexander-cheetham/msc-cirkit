@@ -205,6 +205,9 @@ def create_wandb_visualisations(results_table, config) -> None:
     if "rel_error" in col_indices:
         rel_errors = data_array[:, col_indices["rel_error"]].astype(float)
         error_label = "Relative Error"
+    elif "bpd_diff" in col_indices:
+        rel_errors = data_array[:, col_indices["bpd_diff"]].astype(float)
+        error_label = "|ΔBPD|"
     elif "nll_diff" in col_indices:
         rel_errors = data_array[:, col_indices["nll_diff"]].astype(float)
         error_label = "ΔNLL"
