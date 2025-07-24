@@ -136,14 +136,25 @@ class WandbCircuitBenchmark:
         # For squared circuit: num_variables = input_dim^2
         num_variables = input_dim**2
         if self.config.circuit_structure == "MNIST":
-            # MNIST circuits use categorical input layers expecting discrete
-            # pixel values in the range [0, 255]. ``torch.randn`` would
-            # generate floating point values that after casting to ``long`` in
-            # the Categorical layer might be negative or exceed the number of
-            # categories, triggering CUDA index errors.  ``torch.randint``
-            # ensures values fall within the valid range.
-            num_variables = 784
-            return torch.randint(0, 256, (batch_size, num_variables), device=device)
+            # MNIST circuits operate on real digit images. ``torchvision``
+            # exposes them as uint8 tensors in the range ``[0, 255]``.  If the
+            # dataset cannot be downloaded (e.g. due to network restrictions) we
+            # fall back to random integers, matching the previous behaviour.
+            if not hasattr(self, "_mnist_dataset"):
+                from torchvision.datasets import MNIST
+
+                try:
+                    self._mnist_dataset = MNIST(
+                        root=".data", train=False, download=True
+                    )
+                except Exception:
+                    return torch.randint(
+                        0, 256, (batch_size, num_variables), device=device
+                    )
+            dataset = self._mnist_dataset
+            idx = torch.randint(len(dataset), (batch_size,))
+            images = dataset.data[idx].to(device)
+            return images.view(batch_size, 784).long()    
         return torch.randn(batch_size, num_variables, device=device)
 
     def time_forward_pass(self, circuit, test_input, num_warmup=10, num_trials=100):

@@ -5,6 +5,7 @@ import torch
 import importlib
 import wandb
 from types import SimpleNamespace
+from torchvision import datasets
 from src.config import BenchmarkConfig
 from src.circuit_types import make_squarable_mnist_circuit
 import cirkit.symbolic.functional as SF
@@ -19,6 +20,15 @@ def test_create_test_input_mnist_inference(monkeypatch):
     compile_symbolic = benchmarks.compile_symbolic
     WandbCircuitBenchmark = benchmarks.WandbCircuitBenchmark
 
+    class DummyMNIST:
+        def __init__(self, *a, **k):
+            self.data = torch.arange(28 * 28, dtype=torch.uint8).view(1, 28, 28)
+
+        def __len__(self):
+            return 1
+
+    monkeypatch.setattr(datasets, "MNIST", DummyMNIST)
+
     config = BenchmarkConfig(circuit_structure="MNIST", region_graph="quad-tree-4", input_units=[1], sum_units=[1])
     bench = WandbCircuitBenchmark.__new__(WandbCircuitBenchmark)
     bench.config = config
@@ -30,6 +40,8 @@ def test_create_test_input_mnist_inference(monkeypatch):
     test_input = bench.create_test_input(1, 28, config.device)
     assert test_input.shape == (1, 28 * 28)
     assert test_input.dtype == torch.long
+    # Ensure the tensor comes from the dummy dataset rather than being random
+    assert torch.equal(test_input[0], DummyMNIST().data.view(-1).long())
 
     output = compiled(test_input)
     assert output.shape[0] == 1
