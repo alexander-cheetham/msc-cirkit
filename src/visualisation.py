@@ -122,43 +122,54 @@ def plot_memory_reduction(
     ranks,
     matrix_sizes,
     memory_reductions,
-    unique_ranks,
-    unique_matrix_sizes,
+    rank_percentages,
     powers_of_two=False,
 ):
-    """Plot memory reduction for each matrix size and rank."""
-    fig = plt.figure(figsize=(10, 6))
-    for rank in unique_ranks:
-        mask = ranks == rank
-        sizes = matrix_sizes[mask]
-        if powers_of_two:
-            unique_sizes_for_rank = sorted(
-                set(sizes), key=lambda s: int(str(s).split("^")[1])
-            )
-        else:
-            unique_sizes_for_rank = sorted(set(sizes))
-        avg_mem_red = []
-        for size in unique_sizes_for_rank:
-            size_mask = (matrix_sizes == size) & (ranks == rank)
-            if size_mask.any():
-                avg_mem_red.append(memory_reductions[size_mask].mean())
-        if avg_mem_red:
-            plt.plot(
-                range(len(unique_sizes_for_rank)),
-                avg_mem_red,
-                "o-",
-                label=f"rank={rank}",
-                markersize=8,
-            )
-    plt.xticks(range(len(unique_matrix_sizes)), unique_matrix_sizes, rotation=45)
-    plt.xlabel("Matrix Size")
-    plt.ylabel("Memory Reduction")
-    plt.title("Memory Reduction by Matrix Size and Rank")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    """Plot memory reduction for each matrix size at fixed rank‑percentages."""
+    # Parse a size token into an integer N:
+    def to_numeric(s):
+        # e.g. "400x400" → 400
+        if isinstance(s, str) and "x" in s:
+            return int(s.split("x", 1)[0])
+        # e.g. "2^10" → 1024
+        if powers_of_two and isinstance(s, str) and "^" in s:
+            return 2 ** int(s.split("^", 1)[1])
+        # fallback: maybe it's already numeric
+        return int(s)
+
+    # build numeric array of N values
+    numeric_sizes = np.array([to_numeric(s) for s in matrix_sizes])
+    unique_sizes = sorted(set(numeric_sizes))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for pct in rank_percentages:
+        avg_mem = []
+        for N in unique_sizes:
+            expected_rank = int(pct * N)
+            mask = (numeric_sizes == N) & (ranks == expected_rank)
+            avg_mem.append(memory_reductions[mask].mean() if mask.any() else np.nan)
+
+        ax.plot(
+            unique_sizes,
+            avg_mem,
+            marker="o",
+            label=f"{int(pct*100)}% of N",
+            markersize=8,
+        )
+
+    # label ticks back with "NxN" notation
+    ax.set_xticks(unique_sizes)
+    ax.set_xticklabels([f"{N}x{N}" for N in unique_sizes], rotation=45)
+    ax.set_xlabel("Matrix Size")
+    ax.set_ylabel("Memory Reduction")
+    ax.set_title("Memory Reduction by Matrix Size and Rank Percentage")
+    ax.legend(title="Rank = % of N")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
     wandb.log({"charts/memory_reduction": wandb.Image(fig)})
-    plt.close()
+    plt.close(fig)
 
 
 def plot_error_vs_depth(depths, errors, unique_depths, error_label):
@@ -232,6 +243,7 @@ def create_wandb_visualisations(results_table, config) -> None:
         unique_matrix_sizes = [f"2^{e}" for e in unique_matrix_exps]
     else:
         unique_matrix_sizes = sorted(set(matrix_sizes))
+    print(f"matrix sizes {matrix_sizes}")
 
     plot_speedup_vs_rank(n_inputs, ranks, speedups, unique_n_inputs)
     if rel_errors is not None:
@@ -249,7 +261,6 @@ def create_wandb_visualisations(results_table, config) -> None:
         ranks,
         matrix_sizes,
         memory_reductions,
-        unique_ranks,
-        unique_matrix_sizes,
+        config.rank_percentages,
         powers_of_two=config.powers_of_two,
     )
