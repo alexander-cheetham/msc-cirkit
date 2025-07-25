@@ -7,6 +7,8 @@ import time
 import numpy as np
 from typing import Dict, List
 from tqdm import tqdm
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 
 from .config import BenchmarkConfig
 from .profilers import WandbMemoryProfiler, FLOPCounter
@@ -53,6 +55,8 @@ def sync_sumlayer_weights(original: nn.Module, nystrom: nn.Module) -> None:
         raise ValueError("Layer count mismatch when syncing weights")
     for o, n in zip(orig_layers, nys_layers):
         n._build_factors_from(o)
+
+
 
 
 class WandbCircuitBenchmark:
@@ -122,6 +126,8 @@ class WandbCircuitBenchmark:
             "efficiencies": [],
             "bpd_diffs": [],
         }
+
+
 
     def compute_dynamic_ranks(self, n_input: int, n_sum: int) -> List[int]:
         """Compute ranks as percentages of the squared dimension."""
@@ -247,6 +253,19 @@ class WandbCircuitBenchmark:
                 symbolic, device=self.config.device, opt=True,rank=rank
             )
 
+            if self.config.circuit_structure == "MNIST":
+                cache_path = os.path.join(
+                    "model_cache", f"mnist_{n_input}_{n_sum}.pt"
+                )
+                if os.path.exists(cache_path):
+                    state = torch.load(cache_path, map_location=self.config.device)
+                    original_circuit.load_state_dict(state)
+                else:
+                    raise RuntimeError(
+                        "Pretrained MNIST weights missing. "
+                        "Run experiments/train_mnist_cache.py first."
+                    )
+
             # Ensure Nyström layers approximate the same weights
             sync_sumlayer_weights(original_circuit, nystrom_circuit)
 
@@ -317,8 +336,30 @@ class WandbCircuitBenchmark:
 
             # Approximation metrics
             with torch.no_grad():
-                orig_output = original_circuit(test_input).real
-                nystrom_output = nystrom_circuit(test_input).real
+                if self.config.circuit_structure == "MNIST":
+                    transform = transforms.Compose(
+                        [
+                            transforms.ToTensor(),
+                            transforms.Lambda(lambda x: (255 * x.view(-1)).long()),
+                        ]
+                    )
+                    data_test = datasets.MNIST(
+                        "datasets", train=False, download=True, transform=transform
+                    )
+                    test_dataloader = DataLoader(
+                        data_test, shuffle=False, batch_size=256
+                    )
+                    orig_batches = []
+                    nyst_batches = []
+                    for batch, _ in test_dataloader:
+                        batch = batch.to(self.config.device)
+                        orig_batches.append(original_circuit(batch).real)
+                        nyst_batches.append(nystrom_circuit(batch).real)
+                    orig_output = torch.cat(orig_batches, dim=0)
+                    nystrom_output = torch.cat(nyst_batches, dim=0)
+                else:
+                    orig_output = original_circuit(test_input).real
+                    nystrom_output = nystrom_circuit(test_input).real
 
                 # TODO: verify that these formulas for NLL and KL divergence are
                 # consistent with how the circuits represent probabilities. The
