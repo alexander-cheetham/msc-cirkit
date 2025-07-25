@@ -25,6 +25,8 @@ def train_mnist_circuit(symbolic, device):
     dataset = datasets.MNIST('datasets', train=True, download=True, transform=transform)
     dataloader = DataLoader(dataset, shuffle=True, batch_size=256)
 
+    num_steps = len(dataloader)
+
     optimizer = optim.Adam(circuit.parameters(), lr=0.01)
 
     num_epochs = 10
@@ -32,10 +34,13 @@ def train_mnist_circuit(symbolic, device):
     running_loss = 0.0
     running_samples = 0
 
-    for _ in range(num_epochs):
-        for batch, _ in dataloader:
+    for epoch_idx in range(num_epochs):
+        for batch_idx, (batch, _) in enumerate(dataloader):
             batch = batch.to(device)
-            loss = -torch.mean(circuit(batch))
+            print(
+                f"Epoch {epoch_idx + 1}/{num_epochs}, Step {batch_idx + 1}/{num_steps}"
+            )
+            loss = -torch.mean(circuit(batch).real)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -102,9 +107,14 @@ def main():
             if os.path.exists(cache_file):
                 print(f"Skipping existing model {cache_file}")
                 continue
-            symbolic = builder(region_graph=config.region_graph,
-                               num_input_units=n_in,
-                               num_sum_units=n_sum)
+            print(
+                f"Training circuit with {n_in} input units and {n_sum} sum units"
+            )
+            symbolic = builder(
+                region_graph=config.region_graph,
+                num_input_units=n_in,
+                num_sum_units=n_sum,
+            )
             symbolic = SF.multiply(symbolic, symbolic)
             circuit = train_mnist_circuit(symbolic, config.device)
             torch.save(circuit.state_dict(), cache_file)
