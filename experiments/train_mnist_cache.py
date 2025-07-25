@@ -13,8 +13,21 @@ import cirkit.symbolic.functional as SF
 CACHE_DIR = "model_cache"
 
 
-def train_mnist_circuit(symbolic, device):
-    """Compile and train ``symbolic`` circuit on MNIST."""
+def train_mnist_circuit(symbolic, device, checkpoint_dir: str, checkpoint_prefix: str):
+    """Compile and train ``symbolic`` circuit on MNIST.
+
+    Parameters
+    ----------
+    symbolic : Circuit
+        Symbolic circuit to compile and train.
+    device : str
+        Device to train on.
+    checkpoint_dir : str
+        Directory to store epoch checkpoints.
+    checkpoint_prefix : str
+        Base name for checkpoint files.
+    """
+
     circuit = compile_symbolic(symbolic, device=device)
     circuit = circuit.to(device)
 
@@ -34,6 +47,8 @@ def train_mnist_circuit(symbolic, device):
     running_loss = 0.0
     running_samples = 0
 
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     for epoch_idx in range(num_epochs):
         for batch_idx, (batch, _) in enumerate(dataloader):
             batch = batch.to(device)
@@ -52,6 +67,13 @@ def train_mnist_circuit(symbolic, device):
                 print(f"Step {step_idx}: Average NLL: {avg:.3f}")
                 running_loss = 0.0
                 running_samples = 0
+
+        checkpoint_path = os.path.join(
+            checkpoint_dir, f"{checkpoint_prefix}_epoch{epoch_idx + 1}.pt"
+        )
+        torch.save(circuit.state_dict(), checkpoint_path)
+        print(f"Saved checkpoint {checkpoint_path}")
+
     return circuit
 
 
@@ -100,6 +122,8 @@ def main():
     )
     builder = CIRCUIT_BUILDERS['MNIST']
     os.makedirs(args.cache_dir, exist_ok=True)
+    checkpoint_dir = os.path.join(args.cache_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     for n_in in config.input_units:
         for n_sum in config.sum_units:
@@ -116,7 +140,13 @@ def main():
                 num_sum_units=n_sum,
             )
             symbolic = SF.multiply(symbolic, symbolic)
-            circuit = train_mnist_circuit(symbolic, config.device)
+            checkpoint_prefix = f"mnist_{n_in}_{n_sum}"
+            circuit = train_mnist_circuit(
+                symbolic,
+                config.device,
+                checkpoint_dir,
+                checkpoint_prefix,
+            )
             torch.save(circuit.state_dict(), cache_file)
             print(f"Saved {cache_file}")
 
