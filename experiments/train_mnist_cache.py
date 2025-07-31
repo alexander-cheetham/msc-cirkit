@@ -47,6 +47,7 @@ def train_mnist_circuit(symbolic, device, checkpoint_dir: str, checkpoint_prefix
     running_loss = 0.0
     running_samples = 0
 
+<<<<<<< HEAD
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     for epoch_idx in range(num_epochs):
@@ -55,6 +56,12 @@ def train_mnist_circuit(symbolic, device, checkpoint_dir: str, checkpoint_prefix
             print(
                 f"Epoch {epoch_idx + 1}/{num_epochs}, Step {batch_idx + 1}/{num_steps}"
             )
+=======
+    for epoch_idx in range(num_epochs):
+        for batch, _ in dataloader:
+            print(f"Epoch {epoch_idx + 1}/{num_epochs}, Step {step_idx + 1}")
+            batch = batch.to(device)
+>>>>>>> 73dd102 (code for spectrum analysis and Experiment 1: Is it actually likely nystrom approximations are actually a good fit)
             loss = -torch.mean(circuit(batch).real)
             loss.backward()
             optimizer.step()
@@ -140,6 +147,7 @@ def main():
                 num_sum_units=n_sum,
             )
             symbolic = SF.multiply(symbolic, symbolic)
+<<<<<<< HEAD
             checkpoint_prefix = f"mnist_{n_in}_{n_sum}"
             circuit = train_mnist_circuit(
                 symbolic,
@@ -147,6 +155,10 @@ def main():
                 checkpoint_dir,
                 checkpoint_prefix,
             )
+=======
+            print(f"Training circuit with {n_in} input units and {n_sum} sum units")
+            circuit = train_mnist_circuit(symbolic, config.device)
+>>>>>>> 73dd102 (code for spectrum analysis and Experiment 1: Is it actually likely nystrom approximations are actually a good fit)
             torch.save(circuit.state_dict(), cache_file)
             print(f"Saved {cache_file}")
 
