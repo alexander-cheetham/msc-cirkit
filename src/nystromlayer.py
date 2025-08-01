@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
+from .sampler import kron_l2_sampler
 
 class NystromSumLayer_old(nn.Module):
     """
@@ -118,6 +119,7 @@ class NystromSumLayer(TorchSumLayer):
         # ------------------------------------------------------------------
         self.rank = int(rank)
         self.weight_orig = original_layer.weight()
+        self.pivot = pivot
         # buffer → moves with .to()/ .cuda() but is not trainable
         self.register_buffer(
             "rank_param", torch.tensor(self.rank, dtype=torch.int32), persistent=False
@@ -217,18 +219,26 @@ class NystromSumLayer(TorchSumLayer):
                 M_f = base_weight[f]
 
                 def kron_block(rows, cols):
-                    r0 = torch.div(rows, K_o_base, rounding_mode='floor')
+                    r0 = torch.div(rows, K_o_base, rounding_mode="floor")
                     r1 = rows % K_o_base
-                    c0 = torch.div(cols, K_i_base, rounding_mode='floor')
+                    c0 = torch.div(cols, K_i_base, rounding_mode="floor")
                     c1 = cols % K_i_base
-
                     return self.semiring.mul(M_f[r0][:, c0], M_f[r1][:, c1])
 
                 if pivots is not None:
                     I, J = pivots[f]
                 else:
-                    I = torch.randperm(K_o, device=M_f.device)[:s]
-                    J = torch.randperm(K_i, device=M_f.device)[:s]
+                    if self.pivot == "l2":
+                        # Importance sample rows/columns based on L2 norms.
+                        # ``kron_l2_sampler`` returns flat indices as well as
+                        # the base index pairs (j1, j2) or (i1, i2).  Those can
+                        # be fed back into ``kron_block`` to reconstruct
+                        # individual columns/rows if needed.
+                        I, _, _ = kron_l2_sampler(M_f, s, axis=0)
+                        J, _, _ = kron_l2_sampler(M_f, s, axis=1)
+                    else:
+                        I = torch.randperm(K_o, device=M_f.device)[:s]
+                        J = torch.randperm(K_i, device=M_f.device)[:s]
                 mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
                 mask_I[I] = False
                 I_c = mask_I.nonzero(as_tuple=False).flatten()
