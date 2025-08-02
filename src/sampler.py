@@ -65,7 +65,6 @@ def kron_l2_sampler(
         raise ValueError("axis must be 0 (rows) or 1 (columns)")
 
     m, n = A.shape
-    device = A.device
 
     if axis == 1:
         norms = A.pow(2).sum(dim=0)  # column norms
@@ -81,14 +80,12 @@ def kron_l2_sampler(
         probs = norms / total
 
     dist = Categorical(probs=probs)
-    g = None
     if seed is not None:
-        g = torch.Generator(device=device)
-        g.manual_seed(int(seed))
+        torch.manual_seed(int(seed))
 
     def sample_once(num: int) -> Tensor:
-        idx1 = dist.sample((num,), generator=g)
-        idx2 = dist.sample((num,), generator=g)
+        idx1 = dist.sample((num,))
+        idx2 = dist.sample((num,))
         return (idx1 * dim + idx2).long()
 
     need = target_rank + oversampling_p

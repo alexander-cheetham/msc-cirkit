@@ -281,16 +281,17 @@ class WandbCircuitBenchmark:
             )
 
             if self.config.circuit_structure == "MNIST":
-                cache_path = os.path.join(
-                    "model_cache", f"mnist_{n_input}_{n_sum}.pt"
+                cache_path = (
+                    f"/content/msc-cirkit/model_cache/mnist_{n_input}_{n_sum}_epoch10.pt"
                 )
                 if os.path.exists(cache_path):
-                    state = torch.load(cache_path, map_location=self.config.device)
-                    original_circuit.load_state_dict(state)
+                    checkpoint = torch.load(
+                        cache_path, map_location=self.config.device
+                    )["model_state_dict"]
+                    original_circuit.load_state_dict(checkpoint)
                 else:
-                    raise RuntimeError(
-                        "Pretrained MNIST weights missing. "
-                        "Run experiments/train_mnist_cache.py first."
+                    raise FileNotFoundError(
+                        f"Checkpoint not found at {cache_path}"
                     )
 
             # Ensure Nyström layers approximate the same weights
