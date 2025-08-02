@@ -121,6 +121,7 @@ class WandbCircuitBenchmark:
                 "n_input",
                 "n_sum",
                 "rank",
+                "sampling_method",
                 "batch_size",
                 "matrix_size",
                 "orig_time_ms",
@@ -224,6 +225,8 @@ class WandbCircuitBenchmark:
         rank: int,
         batch_size: int,
         step: int,
+        *,
+        pivot: str,
         depth: int | None = None,
     ) -> Dict:
         """Run benchmark for single configuration with wandb logging.
@@ -249,6 +252,7 @@ class WandbCircuitBenchmark:
         }
         if depth is not None:
             log_dict["config/depth"] = depth
+        log_dict["config/pivot"] = pivot
         wandb.log(log_dict)
 
         try:
@@ -293,7 +297,7 @@ class WandbCircuitBenchmark:
             sync_sumlayer_weights(
                 original_circuit,
                 nystrom_circuit,
-                pivot=self.config.pivot,
+                pivot=pivot,
                 rank=rank,
             )
 
@@ -435,6 +439,7 @@ class WandbCircuitBenchmark:
                 n_input,
                 n_sum,
                 rank,
+                pivot,
                 batch_size,
                 matrix_label,
                 orig_times["mean"] * 1000,
@@ -508,9 +513,19 @@ class WandbCircuitBenchmark:
         """Run complete benchmark suite with wandb tracking"""
 
         step = 0
+        # Decide which Nyström sampling methods to benchmark.  If
+        # ``approximation_methods`` is ``None`` fall back to the single
+        # ``pivot`` field for backward compatibility.
+        methods = (
+            self.config.approximation_methods
+            if self.config.approximation_methods is not None
+            else [self.config.pivot]
+        )
+
         # Pre-compute the number of configurations that will actually be
         # benchmarked. When ``powers_of_two`` is enabled we only test square
-        # matrices, so skip any non-square combinations in this count.
+        # matrices, so skip any non-square combinations in this count.  Each
+        # configuration is evaluated once per sampling method.
         total_configs = 0
         depth_range = (
             range(2, self.config.depth + 1)
@@ -530,7 +545,7 @@ class WandbCircuitBenchmark:
                     for rank in ranks_to_use:
                         if rank >= min(n_input**2, n_sum**2):
                             continue
-                        total_configs += len(self.config.batch_sizes)
+                        total_configs += len(self.config.batch_sizes) * len(methods)
 
         # Create progress bar in wandb
         progress = 0
@@ -552,44 +567,51 @@ class WandbCircuitBenchmark:
                             continue
 
                         for batch_size in self.config.batch_sizes:
-                            progress += 1
-                            wandb.log({"progress": progress / total_configs})
+                            for pivot in methods:
+                                progress += 1
+                                wandb.log({"progress": progress / total_configs})
 
-                            print(
-                                f"[{progress}/{total_configs}] Benchmarking: depth={depth}, "
-                                f"input={n_input}, sum={n_sum}, "
-                                f"rank={rank}, batch={batch_size}"
-                            )
-
-                            try:
-                                builder = CIRCUIT_BUILDERS[
-                                    self.config.circuit_structure
-                                ]
-                                builder_kwargs = {}
-                                if self.config.circuit_structure == "deep_cp_circuit":
-                                    builder_kwargs["depth"] = depth
-                                if self.config.circuit_structure == "MNIST":
-                                    builder_kwargs["region_graph"] = (
-                                        self.config.region_graph
-                                    )
-                                if n_input is not None:
-                                    builder_kwargs["num_input_units"] = n_input
-                                if n_sum is not None:
-                                    builder_kwargs["num_sum_units"] = n_sum
-
-                                self.base_symbolic_circuit = builder(**builder_kwargs)
-                                result = self.benchmark_single_configuration(
-                                    n_input, n_sum, rank, batch_size, step, depth=depth
+                                print(
+                                    f"[{progress}/{total_configs}] Benchmarking: depth={depth}, "
+                                    f"input={n_input}, sum={n_sum}, "
+                                    f"rank={rank}, batch={batch_size}, pivot={pivot}"
                                 )
-                                if result is not None:
-                                    step += 1
 
-                            except Exception as e:
-                                print(f"  Failed: {e}")
-                                tb_str = traceback.format_exc()
-                                print(f"Error details:\n{tb_str}")
-                                wandb.log({"errors/count": 1, "errors/message": str(e)})
-                                continue
+                                try:
+                                    builder = CIRCUIT_BUILDERS[
+                                        self.config.circuit_structure
+                                    ]
+                                    builder_kwargs = {}
+                                    if self.config.circuit_structure == "deep_cp_circuit":
+                                        builder_kwargs["depth"] = depth
+                                    if self.config.circuit_structure == "MNIST":
+                                        builder_kwargs["region_graph"] = (
+                                            self.config.region_graph
+                                        )
+                                    if n_input is not None:
+                                        builder_kwargs["num_input_units"] = n_input
+                                    if n_sum is not None:
+                                        builder_kwargs["num_sum_units"] = n_sum
+
+                                    self.base_symbolic_circuit = builder(**builder_kwargs)
+                                    result = self.benchmark_single_configuration(
+                                        n_input,
+                                        n_sum,
+                                        rank,
+                                        batch_size,
+                                        step,
+                                        pivot=pivot,
+                                        depth=depth,
+                                    )
+                                    if result is not None:
+                                        step += 1
+
+                                except Exception as e:
+                                    print(f"  Failed: {e}")
+                                    tb_str = traceback.format_exc()
+                                    print(f"Error details:\n{tb_str}")
+                                    wandb.log({"errors/count": 1, "errors/message": str(e)})
+                                    continue
 
         # Log final summary statistics
         self.log_summary_statistics()

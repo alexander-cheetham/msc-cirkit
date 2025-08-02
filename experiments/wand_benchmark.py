@@ -51,12 +51,23 @@ def main():
         default="quad-tree-4",
         help="Region graph to use for MNIST circuits",
     )
+    # Allow benchmarking multiple Nyström sampling strategies in a single run.
+    # ``--pivots`` accepts one or more methods.  For backward compatibility a
+    # legacy ``--pivot`` argument is also recognised to specify a single
+    # method.
+    parser.add_argument(
+        "--pivots",
+        nargs="+",
+        choices=["uniform", "l2"],
+        default=None,
+        help="Pivot strategies to benchmark (e.g. --pivots uniform l2)",
+    )
     parser.add_argument(
         "--pivot",
         type=str,
         choices=["uniform", "l2"],
-        default="uniform",
-        help="Pivot strategy for Nyström layers",
+        default=None,
+        help="Legacy single pivot strategy",
     )
     parser.add_argument(
         "--no-dynamic-ranks",
@@ -67,6 +78,16 @@ def main():
     parser.set_defaults(use_dynamic_ranks=True)
 
     args = parser.parse_args()
+
+    # Determine which pivot strategies to benchmark.  ``--pivots`` takes
+    # precedence; if absent we fall back to the legacy ``--pivot`` argument and
+    # finally to both methods.
+    if args.pivots is not None:
+        pivots = args.pivots
+    elif args.pivot is not None:
+        pivots = [args.pivot]
+    else:
+        pivots = ["uniform", "l2"]
     
     # config = BenchmarkConfig(
     #     input_units=[10, 20, 30, 40],
@@ -108,7 +129,8 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
-            pivot=args.pivot,
+            pivot=pivots[0],
+            approximation_methods=pivots,
         )
     else:
         config = BenchmarkConfig(
@@ -124,7 +146,8 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
-            pivot=args.pivot,
+            pivot=pivots[0],
+            approximation_methods=pivots,
         )
     
     print(f"Starting wandb experiment on {config.device}")

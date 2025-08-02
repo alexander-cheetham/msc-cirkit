@@ -22,6 +22,13 @@ class BenchmarkConfig:
         default="uniform",
         metadata={"help": "Pivot strategy for Nyström layers ('uniform' or 'l2')"},
     )
+
+    # Optional list of Nyström sampling methods to benchmark.  If ``None``
+    # only ``pivot`` is used.  This allows running multiple Nyström
+    # approximations (e.g. both ``'uniform'`` and ``'l2'``) in a single
+    # benchmark while retaining backward compatibility with older
+    # configurations that specified a single ``pivot``.
+    approximation_methods: Optional[List[str]] = None
     
     # Training settings
     batch_sizes: List[int] = field(default_factory=lambda: [32, 64, 128])
