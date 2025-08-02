@@ -16,6 +16,12 @@ class BenchmarkConfig:
     rank_percentages: List[float] = field(
         default_factory=lambda: [0.01,0.1,0.2, 0.4, 0.6, 0.8]
     )
+
+    # Pivot selection strategy for Nyström approximation
+    pivot: str = field(
+        default="uniform",
+        metadata={"help": "Pivot strategy for Nyström layers ('uniform' or 'l2')"},
+    )
     
     # Training settings
     batch_sizes: List[int] = field(default_factory=lambda: [32, 64, 128])

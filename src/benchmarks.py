@@ -47,13 +47,36 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, 
     return compiled
 
 
-def sync_sumlayer_weights(original: nn.Module, nystrom: nn.Module) -> None:
-    """Copy weights from ``original`` to ``nystrom`` for matching layers."""
+def sync_sumlayer_weights(
+    original: nn.Module,
+    nystrom: nn.Module,
+    *,
+    pivot: str = "uniform",
+    rank: int | None = None,
+) -> None:
+    """Copy weights from ``original`` to ``nystrom`` for matching layers.
+
+    Parameters
+    ----------
+    original : nn.Module
+        Circuit with full-rank ``TorchSumLayer`` modules.
+    nystrom : nn.Module
+        Circuit with ``NystromSumLayer`` modules to update.
+    pivot : str, optional
+        Pivot strategy ("uniform" or "l2").
+    rank : int | None, optional
+        If given, overrides each Nyström layer's rank before rebuilding factors.
+    """
     orig_layers = [m for m in original.modules() if isinstance(m, TorchSumLayer)]
     nys_layers = [m for m in nystrom.modules() if isinstance(m, NystromSumLayer)]
     if len(orig_layers) != len(nys_layers):
         raise ValueError("Layer count mismatch when syncing weights")
+
     for o, n in zip(orig_layers, nys_layers):
+        if rank is not None:
+            n.rank = int(rank)
+            n.rank_param.data.fill_(n.rank)
+        n.pivot = pivot
         n._build_factors_from(o)
 
 
@@ -267,7 +290,12 @@ class WandbCircuitBenchmark:
                     )
 
             # Ensure Nyström layers approximate the same weights
-            sync_sumlayer_weights(original_circuit, nystrom_circuit)
+            sync_sumlayer_weights(
+                original_circuit,
+                nystrom_circuit,
+                pivot=self.config.pivot,
+                rank=rank,
+            )
 
             if torch.cuda.device_count() > 1:
                 original_circuit = nn.DataParallel(original_circuit)
