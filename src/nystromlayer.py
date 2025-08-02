@@ -229,13 +229,10 @@ class NystromSumLayer(TorchSumLayer):
                     I, J = pivots[f]
                 else:
                     if self.pivot == "l2":
-                        # Importance sample rows/columns based on L2 norms.
-                        # ``kron_l2_sampler`` returns flat indices as well as
-                        # the base index pairs (j1, j2) or (i1, i2).  Those can
-                        # be fed back into ``kron_block`` to reconstruct
-                        # individual columns/rows if needed.
-                        I, _, _ = kron_l2_sampler(M_f, s, axis=0)
-                        J, _, _ = kron_l2_sampler(M_f, s, axis=1)
+                        # Importance sample unique row/column indices based on
+                        # L2 norms of the base matrix.
+                        I = kron_l2_sampler(M_f, target_rank=s, axis=0)
+                        J = kron_l2_sampler(M_f, target_rank=s, axis=1)
                     else:
                         I = torch.randperm(K_o, device=M_f.device)[:s]
                         J = torch.randperm(K_i, device=M_f.device)[:s]
