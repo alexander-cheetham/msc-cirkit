@@ -97,7 +97,7 @@ class NystromSumLayer(TorchSumLayer):
         *,
         rank: int,
         learnable_rank: bool = False,
-        pivot: str = "random",
+        pivot: str = "uniform",
         semiring=None,
     ):
         # ------------------------------------------------------------------
@@ -186,7 +186,7 @@ class NystromSumLayer(TorchSumLayer):
             Layer providing the Kronecker-product weights.
         pivots : list[tuple[Tensor, Tensor]] | None
             Optional list of pivot index pairs ``(I, J)`` for each fold.  If not
-            provided, random pivots are chosen as before.
+            provided, indices are chosen according to ``self.pivot``.
         """
         with torch.no_grad():                                   # saves memory
             # ``original_layer.weight`` encodes the Kronecker product of a

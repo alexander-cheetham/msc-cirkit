@@ -52,6 +52,13 @@ def main():
         help="Region graph to use for MNIST circuits",
     )
     parser.add_argument(
+        "--pivot",
+        type=str,
+        choices=["uniform", "l2"],
+        default="uniform",
+        help="Pivot strategy for Nyström layers",
+    )
+    parser.add_argument(
         "--no-dynamic-ranks",
         dest="use_dynamic_ranks",
         action="store_false",
@@ -101,6 +108,7 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            pivot=args.pivot,
         )
     else:
         config = BenchmarkConfig(
@@ -116,6 +124,7 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            pivot=args.pivot,
         )
     
     print(f"Starting wandb experiment on {config.device}")
