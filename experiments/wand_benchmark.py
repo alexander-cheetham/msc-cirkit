@@ -163,7 +163,9 @@ def main():
         builder_kwargs["region_graph"] = config.region_graph
 
     symbolic_circuit = builder(**builder_kwargs)
+    print("pre benchmark")
     benchmark = WandbCircuitBenchmark(config, symbolic_circuit)
+    print("starting benchmark")
     results = benchmark.run_full_benchmark()
     
     # Save artifacts

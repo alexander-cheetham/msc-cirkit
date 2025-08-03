@@ -244,13 +244,13 @@ class NystromSumLayer(TorchSumLayer):
                 J_c = mask_J.nonzero(as_tuple=False).flatten()
 
                 A = kron_block(I, J)
-                U, S, Vh = torch.linalg.svd(A, full_matrices=False)
+                #U, S, Vh = torch.linalg.svd(A, full_matrices=False)
 
-                L_inv = torch.diag(1.0 / S)
+                #L_inv = torch.diag(1.0 / S)
                 F_blk = kron_block(I_c, J)
                 B_blk = kron_block(I, J_c)
-                tilde_U = F_blk @ Vh.T @ L_inv
-                tilde_H = L_inv @ U.T @ B_blk
+                #tilde_U = F_blk @ Vh.T @ L_inv
+                #tilde_H = L_inv @ U.T @ B_blk
 
                 C   = torch.cat([A, F_blk], dim=0)
                 R   = torch.cat([A, B_blk], dim=1)

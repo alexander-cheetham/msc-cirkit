@@ -72,12 +72,44 @@ def sync_sumlayer_weights(
     if len(orig_layers) != len(nys_layers):
         raise ValueError("Layer count mismatch when syncing weights")
 
-    for o, n in zip(orig_layers, nys_layers):
-        if rank is not None:
-            n.rank = int(rank)
-            n.rank_param.data.fill_(n.rank)
-        n.pivot = pivot
-        n._build_factors_from(o)
+    import time
+    import torch
+    import faulthandler
+    from datetime import datetime
+
+    # enable fault handlers globally (can also be enabled via PYTHONFAULTHANDLER=1)
+    faulthandler.enable(all_threads=True)
+
+    total = len(orig_layers)
+    interval = max(1, total // 10)  # for 10% progress ticks
+
+    for i, (o, n) in enumerate(zip(orig_layers, nys_layers), start=1):
+        start = time.perf_counter()
+        # start a timeout watchdog: dump stack if this iteration exceeds 30s
+        faulthandler.dump_traceback_later(30, repeat=False)  # replaced if called again
+
+        try:
+            if rank is not None:
+                n.rank = int(rank)
+                n.rank_param.data.fill_(n.rank)
+            n.pivot = pivot
+            n._build_factors_from(o)
+
+            # ensure all CUDA kernels finish before proceeding / timing
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception as e:
+            print(f"[{datetime.now()}] Exception on layer {i}/{total}: {e}", flush=True)
+            raise
+        finally:
+            # cancel the pending watchdog so it doesn't fire after success
+            faulthandler.cancel_dump_traceback_later()
+
+        duration = time.perf_counter() - start
+        #print(f"[{datetime.now()}] Layer {i}/{total} took {duration:.3f}s", flush=True)
+        if i % interval == 0 or i == total:
+            pct = int(100 * i / total)
+            print(f"[{datetime.now()}] Progress: {pct}% ({i}/{total})", flush=True)
 
 
 
@@ -165,7 +197,9 @@ class WandbCircuitBenchmark:
         """Create test input tensor with correct shape for circuit."""
         # For squared circuit: num_variables = input_dim^2
         num_variables = input_dim**2
+        print("create tet input called")
         if self.config.circuit_structure == "MNIST":
+            print("MNIST circuit structure detected")
             # MNIST circuits operate on real digit images. ``torchvision``
             # exposes them as uint8 tensors in the range ``[0, 255]``.  If the
             # dataset cannot be downloaded (e.g. due to network restrictions) we
@@ -175,15 +209,18 @@ class WandbCircuitBenchmark:
 
                 try:
                     self._mnist_dataset = MNIST(
-                        root=".data", train=False, download=True
+                        root="./.data", train=False, download=False
                     )
-                except Exception:
+                    print(("MNIST dataset downloaded successfully."))
+                except Exception as e:
+                    print(f"Failed to download MNIST dataset: {e}")
                     return torch.randint(
                         0, 256, (batch_size, num_variables), device=device
                     )
             dataset = self._mnist_dataset
             idx = torch.randint(len(dataset), (batch_size,))
             images = dataset.data[idx].to(device)
+            print(f"Using MNIST images with shape: {images.shape}")
             return images.view(batch_size, 784).long()    
         return torch.randn(batch_size, num_variables, device=device)
 
@@ -279,10 +316,11 @@ class WandbCircuitBenchmark:
             nystrom_circuit = compile_symbolic(
                 symbolic, device=self.config.device, opt=True,rank=rank
             )
+            print("pre chcekpoint")
 
             if self.config.circuit_structure == "MNIST":
                 cache_path = (
-                    f"/content/msc-cirkit/model_cache/mnist_{n_input}_{n_sum}_epoch10.pt"
+                    f"./model_cache/checkpoints/mnist_{n_input}_{n_sum}_epoch10.pt"
                 )
                 if os.path.exists(cache_path):
                     checkpoint = torch.load(
@@ -293,7 +331,7 @@ class WandbCircuitBenchmark:
                     raise FileNotFoundError(
                         f"Checkpoint not found at {cache_path}"
                     )
-
+            print("post checkpoint")
             # Ensure Nyström layers approximate the same weights
             sync_sumlayer_weights(
                 original_circuit,
@@ -301,13 +339,14 @@ class WandbCircuitBenchmark:
                 pivot=pivot,
                 rank=rank,
             )
-
+            print("weights synced")
             if torch.cuda.device_count() > 1:
                 original_circuit = nn.DataParallel(original_circuit)
                 nystrom_circuit  = nn.DataParallel(nystrom_circuit)
-
+            print(f"circuits created")
             # Create test input
             test_input = self.create_test_input(batch_size, n_input, self.config.device)
+            print(f"Test input shape: {test_input.shape}")
 
             # Time forward passes
             orig_times = self.time_forward_pass(
@@ -377,7 +416,7 @@ class WandbCircuitBenchmark:
                         ]
                     )
                     data_test = datasets.MNIST(
-                        "datasets", train=False, download=True, transform=transform
+                        root="./.data", train=False, download=False,transform=transform
                     )
                     test_dataloader = DataLoader(
                         data_test, shuffle=False, batch_size=256

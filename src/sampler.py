@@ -47,57 +47,83 @@ class KronL2Sampler(Protocol):
         ...
 
 
+import torch
+from torch import Tensor
+
 def kron_l2_sampler(
-    A: Tensor,
-    target_rank: int,
-    axis: int,
-    *,
-    oversampling_p: int = 10,
-    seed: Optional[int] = None,
-) -> torch.LongTensor:
-    """Return ``target_rank`` unique indices from ``kron(A, A)``.
+        A: Tensor,
+        target_rank: int,
+        axis: int,
+        *,
+        oversampling_p: int = 10,
+        seed: int | None = None,
+        max_extra_iters: int = 5,  # cap to avoid pathological loops
+    ) -> torch.LongTensor:
+        if axis not in (0, 1):
+            raise ValueError("axis must be 0 (rows) or 1 (columns)")
 
-    The function samples according to squared L2 norms of rows or columns of
-    ``A``.  Oversampling is performed to obtain enough unique indices when
-    sampling with replacement.
-    """
-    if axis not in (0, 1):
-        raise ValueError("axis must be 0 (rows) or 1 (columns)")
+        m, n = A.shape
+        if axis == 1:
+            norms = A.pow(2).sum(dim=0)  # column norms
+            dim = n
+        else:
+            norms = A.pow(2).sum(dim=1)  # row norms
+            dim = m
 
-    m, n = A.shape
+        total = norms.sum()
+        if total == 0 or not torch.isfinite(total):
+            probs = torch.full_like(norms, 1.0 / norms.numel())
+        else:
+            probs = norms / total
 
-    if axis == 1:
-        norms = A.pow(2).sum(dim=0)  # column norms
-        dim = n
-    else:
-        norms = A.pow(2).sum(dim=1)  # row norms
-        dim = m
+        # sanitize probs: ensure no NaNs / infs and normalize
+        if not torch.isfinite(probs).all():
+            probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+        s = probs.sum()
+        if s == 0:
+            probs = torch.full_like(probs, 1.0 / probs.numel())
+        else:
+            probs = probs / s
 
-    total = norms.sum()
-    if total == 0:
-        probs = torch.full_like(norms, 1.0 / norms.numel())
-    else:
-        probs = norms / total
+        # explicit generator to avoid global state mutation
+        gen = None
+        if seed is not None:
+            gen = torch.Generator(probs.device).manual_seed(seed)
 
-    dist = Categorical(probs=probs)
-    if seed is not None:
-        torch.manual_seed(int(seed))
+        def sample_once(num: int) -> Tensor:
+            # vectorized draws instead of Categorical.sample
+            if gen is not None:
+                idx1 = torch.multinomial(probs, num, replacement=True, generator=gen)
+                idx2 = torch.multinomial(probs, num, replacement=True, generator=gen)
+            else:
+                idx1 = torch.multinomial(probs, num, replacement=True)
+                idx2 = torch.multinomial(probs, num, replacement=True)
+            return (idx1 * dim + idx2).long()
 
-    def sample_once(num: int) -> Tensor:
-        idx1 = dist.sample((num,))
-        idx2 = dist.sample((num,))
-        return (idx1 * dim + idx2).long()
+        need = target_rank + oversampling_p
+        idx = sample_once(need)
+        uniq = torch.unique(idx)
 
-    need = target_rank + oversampling_p
-    idx = sample_once(need)
-    uniq = torch.unique(idx)
+        extra_iters = 0
+        while uniq.numel() < target_rank:
+            if extra_iters >= max_extra_iters:
+                # fallback: fill remaining with uniformly random unique indices from full space
+                remaining = target_rank - uniq.numel()
+                all_indices = torch.arange(dim * dim, device=A.device)
+                # shuffle a bit (use same generator if available)
+                if gen is not None:
+                    perm = all_indices[torch.randperm(all_indices.size(0), generator=gen)]
+                else:
+                    perm = all_indices[torch.randperm(all_indices.size(0))]
+                fallback = perm[:remaining]
+                uniq = torch.unique(torch.cat([uniq, fallback]))
+                break
+            need = target_rank - uniq.numel() + oversampling_p
+            extra = sample_once(need)
+            uniq = torch.unique(torch.cat([uniq, extra]))
+            extra_iters += 1
 
-    while uniq.numel() < target_rank:
-        need = target_rank - uniq.numel() + oversampling_p
-        extra = sample_once(need)
-        uniq = torch.unique(torch.cat([uniq, extra]))
-
-    return uniq[:target_rank]
+        return uniq[:target_rank]
 
 
 def create_submatrix(A: Tensor, rank: int, *, seed: Optional[int] = None) -> Tensor:

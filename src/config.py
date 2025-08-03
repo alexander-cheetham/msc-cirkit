@@ -14,7 +14,7 @@ class BenchmarkConfig:
     ranks: List[int] = field(default_factory=lambda: [5, 10, 20, 30, 50])
     use_dynamic_ranks: bool = True
     rank_percentages: List[float] = field(
-        default_factory=lambda: [0.01,0.1,0.2, 0.4, 0.6, 0.8]
+        default_factory=lambda: [0.1,0.2, 0.3, 0.6,]
     )
 
     # Pivot selection strategy for Nyström approximation
