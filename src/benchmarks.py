@@ -225,40 +225,40 @@ class WandbCircuitBenchmark:
         return torch.randn(batch_size, num_variables, device=device)
 
     def time_forward_pass(self, circuit, test_input, num_warmup=10, num_trials=100):
-    """Time forward pass with wandb logging"""
-    times = []
-
-    # Warmup phase
-    for _ in range(num_warmup):
-        output = circuit(test_input)
-        del output # Good practice to delete tensors when done
-
-    # Synchronize and clear cache AFTER warmup and BEFORE timing
-    if test_input.is_cuda:
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache() # <-- KEY CHANGE: Release memory cached during warmup
-
-    # Timed trials phase
-    for i in range(num_trials):
-        start = time.perf_counter()
-        output = circuit(test_input)
-
+        """Time forward pass with wandb logging"""
+        times = []
+    
+        # Warmup phase
+        for _ in range(num_warmup):
+            output = circuit(test_input)
+            del output # Good practice to delete tensors when done
+    
+        # Synchronize and clear cache AFTER warmup and BEFORE timing
         if test_input.is_cuda:
             torch.cuda.synchronize()
-
-        end = time.perf_counter()
-        times.append(end - start)
-        
-        del output # Good practice to delete tensor to free its memory for the cache
-
-    times = np.array(times)
-    return {
-        "mean": times.mean(),
-        "std": times.std(),
-        "min": times.min(),
-        "max": times.max(),
-        "median": np.median(times),
-    }
+            torch.cuda.empty_cache() # <-- KEY CHANGE: Release memory cached during warmup
+    
+        # Timed trials phase
+        for i in range(num_trials):
+            start = time.perf_counter()
+            output = circuit(test_input)
+    
+            if test_input.is_cuda:
+                torch.cuda.synchronize()
+    
+            end = time.perf_counter()
+            times.append(end - start)
+            
+            del output # Good practice to delete tensor to free its memory for the cache
+    
+        times = np.array(times)
+        return {
+            "mean": times.mean(),
+            "std": times.std(),
+            "min": times.min(),
+            "max": times.max(),
+            "median": np.median(times),
+        }
 
     def benchmark_single_configuration(
         self,
