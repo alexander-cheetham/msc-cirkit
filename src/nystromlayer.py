@@ -288,23 +288,23 @@ class NystromSumLayer(TorchSumLayer):
                     #       "Falling back to full SVD. This will be slower but is stable.")
                     
                     # Materialize the full Kronecker product matrix
-                    # W_f = torch.kron(M_f, M_f)
+                    W_f = torch.kron(M_f, M_f)
                     
-                    # # Compute its SVD and truncate to the target rank 's'
-                    # U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f.to(torch.float32))
-                    # U_svd_s = U_svd[:, :s]
-                    # S_svd_s = S_svd[:s]
-                    # Vh_svd_s = Vh_svd[:s, :]
+                    # Compute its SVD and truncate to the target rank 's'
+                    U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f.to(torch.float32))
+                    U_svd_s = U_svd[:, :s]
+                    S_svd_s = S_svd[:s]
+                    Vh_svd_s = Vh_svd[:s, :]
                     
-                    # # Create U and V factors from the SVD components.
-                    # # W ≈ U_s @ diag(S_s) @ Vh_s
-                    # # We split the singular values across U and V for numerical balance.
-                    # S_sqrt = torch.sqrt(S_svd_s)
-                    # U_f = U_svd_s @ torch.diag(S_sqrt)
-                    # V_f = (Vh_svd_s.T @ torch.diag(S_sqrt))
+                    # Create U and V factors from the SVD components.
+                    # W ≈ U_s @ diag(S_s) @ Vh_s
+                    # We split the singular values across U and V for numerical balance.
+                    S_sqrt = torch.sqrt(S_svd_s)
+                    U_f = U_svd_s @ torch.diag(S_sqrt)
+                    V_f = (Vh_svd_s.T @ torch.diag(S_sqrt))
                     
-                    # U_lr.append(U_f)
-                    # V_lr.append(V_f)
+                    U_lr.append(U_f)
+                    V_lr.append(V_f)
                 
                 
 
