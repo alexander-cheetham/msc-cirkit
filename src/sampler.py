@@ -78,6 +78,8 @@ def kron_l2_sampler(
 
         # sanitize probs: ensure no NaNs / infs and normalize
         if not torch.isfinite(probs).all():
+            print("Warning: non-finite values in probabilities, replacing with zeros.")
+
             probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
         s = probs.sum()
         if s == 0:

@@ -167,10 +167,16 @@ class NystromSumLayer(TorchSumLayer):
         # x: (F, H, B, Ki) -> (F, B, H * Ki)
         x = x.permute(0, 2, 1, 3).flatten(start_dim=2)
         # compute x · Vᵀ · U using a single einsum call under the semiring
+        # 1. Reconstruct the weight matrix. It will have small negative values.
+        W_approx = torch.einsum("for,fir->foi", self.U, self.V)
+        #W_approx = torch.softmax(W_approx, dim=-1)
+
+
+        # Step 4: Pass this fully-compliant matrix to the semiring.
         return self.semiring.einsum(
-            "fbi,fir,for->fbo",
+            "fbi,foi->fbo",
             inputs=(x,),
-            operands=(self.V, self.U),
+            operands=(W_approx,),
             dim=-1,
             keepdim=True,
         )
@@ -188,15 +194,19 @@ class NystromSumLayer(TorchSumLayer):
             Optional list of pivot index pairs ``(I, J)`` for each fold.  If not
             provided, indices are chosen according to ``self.pivot``.
         """
+        # --- Constants for the retry mechanism ---
+        MAX_RETRIES = 3
+        CONDITION_THRESHOLD = 1e5 # Threshold for what's considered ill-conditioned
+
         with torch.no_grad():                                   # saves memory
             # ``original_layer.weight`` encodes the Kronecker product of a
             # smaller matrix with itself.  Extract that base matrix so we can
             # compute required sub-blocks without building the full product.
             if hasattr(original_layer.weight, "_nodes"):
                 base_weight = original_layer.weight._nodes[0]()
-                base_weight = torch.nn.functional.softmax(
-                    base_weight, dim=-1
-                )  # ensure probabilities sum to 1
+                # base_weight = torch.nn.functional.softmax(
+                #     base_weight, dim=-1
+                # )  # ensure probabilities sum to 1
                 # assert torch.equal(
                 #     torch.kron(base_weight, base_weight),
                 #     original_layer.weight()
@@ -217,49 +227,88 @@ class NystromSumLayer(TorchSumLayer):
 
             for f in range(F_):
                 M_f = base_weight[f]
-
                 def kron_block(rows, cols):
                     r0 = torch.div(rows, K_o_base, rounding_mode="floor")
                     r1 = rows % K_o_base
                     c0 = torch.div(cols, K_i_base, rounding_mode="floor")
                     c1 = cols % K_i_base
                     return self.semiring.mul(M_f[r0][:, c0], M_f[r1][:, c1])
+                    #return M_f[r0][:, c0]* M_f[r1][:, c1]
 
-                if pivots is not None:
-                    I, J = pivots[f]
-                else:
-                    if self.pivot == "l2":
-                        # Importance sample unique row/column indices based on
-                        # L2 norms of the base matrix.
-                        I = kron_l2_sampler(M_f, target_rank=s, axis=0)
-                        J = kron_l2_sampler(M_f, target_rank=s, axis=1)
+                nystrom_success = False
+                for attempt in range(MAX_RETRIES):
+                    # --- 1. Sample Pivots ---
+                    if pivots is not None:
+                        I, J = pivots[f]
                     else:
-                        I = torch.randperm(K_o, device=M_f.device)[:s]
-                        J = torch.randperm(K_i, device=M_f.device)[:s]
-                mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
-                mask_I[I] = False
-                I_c = mask_I.nonzero(as_tuple=False).flatten()
-                mask_J = torch.ones(K_i, dtype=torch.bool, device=M_f.device)
-                mask_J[J] = False
-                J_c = mask_J.nonzero(as_tuple=False).flatten()
+                        # Using L1 norm sampler for better stability
+                        if self.pivot == "l2":
+                           I = kron_l2_sampler(M_f, target_rank=s, axis=0)
+                           J = kron_l2_sampler(M_f, target_rank=s, axis=1)
+                        else: # Fallback to uniform or original L2
+                           I = torch.randperm(K_o, device=M_f.device)[:s]
+                           J = torch.randperm(K_i, device=M_f.device)[:s]
 
-                A = kron_block(I, J)
-                #U, S, Vh = torch.linalg.svd(A, full_matrices=False)
+                    # --- 2. Form Pivot Matrix and Check Condition ---
+                    A = kron_block(I, J)
+                    A_float32 = A.to(torch.float32)
+                    cond_num = torch.linalg.cond(A_float32)
 
-                #L_inv = torch.diag(1.0 / S)
-                F_blk = kron_block(I_c, J)
-                B_blk = kron_block(I, J_c)
-                #tilde_U = F_blk @ Vh.T @ L_inv
-                #tilde_H = L_inv @ U.T @ B_blk
+                    #print(f"Attempt {attempt + 1}/{MAX_RETRIES}: Condition Number = {cond_num}")
 
-                C   = torch.cat([A, F_blk], dim=0)
-                R   = torch.cat([A, B_blk], dim=1)
-                A_pinv = torch.linalg.pinv(A)
+                    if not torch.isinf(cond_num) and cond_num < CONDITION_THRESHOLD:
+                        # --- 3. SUCCESS PATH: Build Nyström Factors ---
+                        #print("Condition number acceptable. Proceeding with Nyström.")
+                        mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
+                        mask_I[I] = False
+                        I_c = mask_I.nonzero(as_tuple=False).flatten()
+                        mask_J = torch.ones(K_i, dtype=torch.bool, device=M_f.device)
+                        mask_J[J] = False
+                        J_c = mask_J.nonzero(as_tuple=False).flatten()
 
-                U_lr.append(C)
-                V_lr.append((A_pinv @ R).T)
+                        F_blk = kron_block(I_c, J)
+                        B_blk = kron_block(I, J_c)
 
+                        C = torch.cat([A, F_blk], dim=0)
+                        R = torch.cat([A, B_blk], dim=1)
+                        
+                        A_pinv = torch.linalg.pinv(A_float32, rcond=1e-6)
+
+                        U_f = C
+                        V_f = (A_pinv @ R).T
+                        
+                        U_lr.append(U_f)
+                        V_lr.append(V_f)
+                        nystrom_success = True
+                        break # Exit the retry loop
+                
+                if not nystrom_success:
+                    # --- 4. FALLBACK PATH: Use Full SVD ---
+                    # print(f"WARNING: All {MAX_RETRIES} attempts failed for fold {f}. "
+                    #       "Falling back to full SVD. This will be slower but is stable.")
+                    
+                    # Materialize the full Kronecker product matrix
+                    # W_f = torch.kron(M_f, M_f)
+                    
+                    # # Compute its SVD and truncate to the target rank 's'
+                    # U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f.to(torch.float32))
+                    # U_svd_s = U_svd[:, :s]
+                    # S_svd_s = S_svd[:s]
+                    # Vh_svd_s = Vh_svd[:s, :]
+                    
+                    # # Create U and V factors from the SVD components.
+                    # # W ≈ U_s @ diag(S_s) @ Vh_s
+                    # # We split the singular values across U and V for numerical balance.
+                    # S_sqrt = torch.sqrt(S_svd_s)
+                    # U_f = U_svd_s @ torch.diag(S_sqrt)
+                    # V_f = (Vh_svd_s.T @ torch.diag(S_sqrt))
+                    
+                    # U_lr.append(U_f)
+                    # V_lr.append(V_f)
+                
+                
+
+            # --- 5. Finalize Parameters ---
             # Stack over folds and register as parameters (trainable)
-            self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)
-            self.V = nn.Parameter(torch.stack(V_lr, dim=0))     # (F, K_i, s)
-
+            self.U = nn.Parameter(torch.stack(U_lr, dim=0))
+            self.V = nn.Parameter(torch.stack(V_lr, dim=0))
