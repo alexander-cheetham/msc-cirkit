@@ -14,7 +14,7 @@ class BenchmarkConfig:
     ranks: List[int] = field(default_factory=lambda: [5, 10, 20, 30, 50])
     use_dynamic_ranks: bool = True
     rank_percentages: List[float] = field(
-        default_factory=lambda: [0.1,0.2,0.3,0.99,]#1,0.2, 0.3, 0.6,]
+        default_factory=lambda: [0.1,0.2,0.3,0.6,]#1,0.2, 0.3, 0.6,]
     )
 
     # Pivot selection strategy for Nyström approximation
@@ -36,6 +36,10 @@ class BenchmarkConfig:
     num_trials: int = 3
     
     # Hardware
+    use_amp: bool = field(
+        default=False,
+        metadata={"help": "Enable Automatic Mixed Precision (AMP) for GPU runs"}
+    )
     device: str = field(default_factory=lambda: 'cuda' if torch.cuda.is_available() else 'cpu')
     
     # Experiment metadata for wandb
