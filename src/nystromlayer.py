@@ -167,16 +167,10 @@ class NystromSumLayer(TorchSumLayer):
         # x: (F, H, B, Ki) -> (F, B, H * Ki)
         x = x.permute(0, 2, 1, 3).flatten(start_dim=2)
         # compute x · Vᵀ · U using a single einsum call under the semiring
-        # 1. Reconstruct the weight matrix. It will have small negative values.
-        W_approx = torch.einsum("for,fir->foi", self.U, self.V)
-        #W_approx = torch.softmax(W_approx, dim=-1)
-
-
-        # Step 4: Pass this fully-compliant matrix to the semiring.
         return self.semiring.einsum(
-            "fbi,foi->fbo",
+            "fbi,fir,for->fbo",
             inputs=(x,),
-            operands=(W_approx,),
+            operands=(self.V, self.U),
             dim=-1,
             keepdim=True,
         )
