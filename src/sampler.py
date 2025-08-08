@@ -64,10 +64,14 @@ def kron_l2_sampler(
 
         m, n = A.shape
         if axis == 1:
-            norms = A.pow(2).sum(dim=0)  # column norms
+            max_val = A.max() # Find the maximum value in the tensor
+            A_exp_stable = torch.exp(A - max_val)
+            norms = A_exp_stable.sum(dim=0)
             dim = n
         else:
-            norms = A.pow(2).sum(dim=1)  # row norms
+            max_val = A.max() # Find the maximum value in the tensor
+            A_exp_stable = torch.exp(A - max_val)
+            norms = A_exp_stable.sum(dim=1)
             dim = m
 
         total = norms.sum()
