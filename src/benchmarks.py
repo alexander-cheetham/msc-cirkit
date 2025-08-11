@@ -45,6 +45,7 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, 
         nystrom_rank=rank,
     )
     compiled = compile_circuit(circuit, ctx, nystrom_rank=rank).to(device).eval()
+    print(f"Compiled circuit with rank {rank} on device {device}", flush=True)
     return compiled
 
 
@@ -245,17 +246,32 @@ class WandbCircuitBenchmark:
 
                     nystrom_times = self.time_forward_pass(nystrom_circuit, test_input, self.config.num_warmup, self.config.num_trials)
 
-                    del test_input  # Free memory after timing
+                      # Free memory after timing
 
                     with torch.no_grad():
                         if self.config.circuit_structure == "MNIST":
+                            del test_input
                             transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
                             data_test = datasets.MNIST(root="./.data", train=False, download=True, transform=transform)
                             test_dataloader = DataLoader(data_test, shuffle=False, batch_size=physical_batch_size)
                             nyst_batches = [nystrom_circuit(batch.to(device)).real for batch, _ in tqdm(test_dataloader, desc="Collating nystrom")]
                             nystrom_output = torch.cat(nyst_batches, dim=0).to("cpu")
                         else:
-                            nystrom_output = nystrom_circuit(test_input).real.to("cpu")
+                             # We will collect the results from each small batch here
+                            nyst_batches = []
+                            
+                            # Manually iterate through test_input in chunks of size 'physical_batch_size'
+                            for i in range(0, test_input.size(0), physical_batch_size):
+                                # Create a small batch by slicing the large tensor
+                                batch = test_input[i : i + physical_batch_size]
+
+                                # Process just this small batch (assuming nystrom_circuit expects it on a specific device)
+                                output_batch = nystrom_circuit(batch).real.to("cpu")
+                                nyst_batches.append(output_batch)
+
+                            # Combine the results from all the batches
+                            nystrom_output = torch.cat(nyst_batches, dim=0)
+                            del test_input
                     print(f"[{datetime.now()}] Success with NYSTROM model, batch size {physical_batch_size}", flush=True)
                     break # Success
                 except RuntimeError as e:
