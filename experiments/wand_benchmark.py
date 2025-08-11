@@ -58,7 +58,7 @@ def main():
     parser.add_argument(
         "--pivots",
         nargs="+",
-        choices=["uniform", "l2"],
+        choices=["uniform", "l2","cur"],
         default=None,
         help="Pivot strategies to benchmark (e.g. --pivots uniform l2)",
     )
@@ -87,7 +87,7 @@ def main():
     elif args.pivot is not None:
         pivots = [args.pivot]
     else:
-        pivots = ["uniform", "l2"]
+        pivots = ["uniform", "l2", "cur"]
     
     # config = BenchmarkConfig(
     #     input_units=[10, 20, 30, 40],

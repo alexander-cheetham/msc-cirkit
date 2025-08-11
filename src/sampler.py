@@ -132,35 +132,82 @@ def kron_l2_sampler(
         return uniq[:target_rank]
 
 
-def create_submatrix(A: Tensor, rank: int, *, seed: Optional[int] = None) -> Tensor:
-    """Construct a ``rank``×``rank`` submatrix of ``kron(A, A)``.
+# kron_cur_min.py
+import torch
+from typing import Optional, Tuple, Dict
 
-    Sampling is performed using :func:`kron_l2_sampler` for both rows and
-    columns, then ``kron_block`` reconstructs the submatrix without explicitly
-    forming the Kronecker product.
+# ---- SVD + leverage on A (rank-k or full/statistical) -----------------------
+def _topk_svd_torch(A: torch.Tensor, k: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    U, S, Vh = torch.linalg.svd(A, full_matrices=False)
+    if k is not None:
+        U = U[:, :k]
+        S = S[:k]
+        Vh = Vh[:k, :]
+    return U, S, Vh
+
+def leverage_scores_A_torch(A: torch.Tensor, k: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    U, _, Vh = _topk_svd_torch(A, k)
+    row_lev = U.abs().pow(2).sum(dim=1)            # ||U_{i,*}||^2
+    col_lev = Vh.conj().T.abs().pow(2).sum(dim=1)  # ||V_{j,*}||^2
+    sum_val = int(round(float(row_lev.sum().item())))
+    return row_lev, col_lev, sum_val
+
+# ---- Minimal CUR planner for F = kron(A, A) ---------------------------------
+def kron_cur_plan_torch_min(
+    A: torch.Tensor,
+    *,
+    c: int,
+    r: int,
+    k: Optional[int] = None,
+    generator: Optional[torch.Generator] = None,
+    return_flat_indices: bool = True,
+) -> Dict[str, torch.Tensor]:
     """
+    Plan leverage-score CUR sampling for F = kron(A, A) *without* forming F.
+
+    Returns a dict with ONLY small tensors:
+      - I_pairs: (r,2) row-pair indices for F   (values in [0..m-1])
+      - J_pairs: (c,2) col-pair indices for F   (values in [0..n-1])
+      - row_scale: (r,) Exactly(r) scaling:  1/sqrt(r * p_row_pair)
+      - col_scale: (c,) Exactly(c) scaling:  1/sqrt(c * p_col_pair)
+      - k_used: int rank used for leverages
+      - (optional) I_flat, J_flat: flattened indices in [0..m*m-1] / [0..n*n-1]
+    """
+    device, dtype = A.device, A.dtype
     m, n = A.shape
-    rows = kron_l2_sampler(A, rank, axis=0, seed=seed)
-    cols = kron_l2_sampler(A, rank, axis=1, seed=None if seed is None else seed + 1)
 
-    def kron_block(r: Tensor, c: Tensor) -> Tensor:
-        r0 = torch.div(r, m, rounding_mode="floor")
-        r1 = r % m
-        c0 = torch.div(c, n, rounding_mode="floor")
-        c1 = c % n
-        return A[r0][:, c0] * A[r1][:, c1]
+    # 1) leverage on A (rank-k or statistical)
+    row_lev, col_lev, sum_val = leverage_scores_A_torch(A, k=k)
+    p_row_1D = (row_lev / row_lev.sum()).to(device=device, dtype=dtype)
+    p_col_1D = (col_lev / col_lev.sum()).to(device=device, dtype=dtype)
 
-    return kron_block(rows, cols)
+    # 2) sample pair indices for F using product distributions (no m^2/n^2 vectors)
+    I1 = torch.multinomial(p_row_1D, num_samples=r, replacement=True, generator=generator)
+    I2 = torch.multinomial(p_row_1D, num_samples=r, replacement=True, generator=generator)
+    J1 = torch.multinomial(p_col_1D, num_samples=c, replacement=True, generator=generator)
+    J2 = torch.multinomial(p_col_1D, num_samples=c, replacement=True, generator=generator)
+    I_pairs = torch.stack([I1, I2], dim=1)  # (r,2)
+    J_pairs = torch.stack([J1, J2], dim=1)  # (c,2)
 
+    # 3) Exactly(r)/Exactly(c) rescaling vectors (pair probabilities)
+    p_row_pairs = p_row_1D[I1] * p_row_1D[I2]  # (r,)
+    p_col_pairs = p_col_1D[J1] * p_col_1D[J2]  # (c,)
+    row_scale = (r * p_row_pairs).reciprocal().sqrt().to(dtype)
+    col_scale = (c * p_col_pairs).reciprocal().sqrt().to(dtype)
 
-if __name__ == "__main__":
-    torch.manual_seed(0)
-    A = torch.randn(4, 3)
+    plan: Dict[str, torch.Tensor] = dict(
+        I_pairs=I_pairs,
+        J_pairs=J_pairs,
+        row_scale=row_scale,
+        col_scale=col_scale,
+        k_used=torch.tensor(sum_val, device=device),
+    )
 
-    rows = kron_l2_sampler(A, target_rank=5, axis=0, seed=0)
-    cols = kron_l2_sampler(A, target_rank=5, axis=1, seed=1)
-    print("Row indices:", rows)
-    print("Column indices:", cols)
+    if return_flat_indices:
+        I_flat = I_pairs[:, 0] * m + I_pairs[:, 1]  # (r,)
+        J_flat = J_pairs[:, 0] * n + J_pairs[:, 1]  # (c,)
+        plan["I_flat"] = I_flat
+        plan["J_flat"] = J_flat
 
-    sub = create_submatrix(A, rank=5, seed=2)
-    print("Submatrix shape:", sub.shape)
+    return plan
+

@@ -163,7 +163,7 @@ class WandbCircuitBenchmark:
         """
         stage = "initialization"
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        print(f"--- Starting configuration: input={n_input}, sum={n_sum}, rank={rank}, initial_batch={initial_batch_size} on {device} ---", flush=True)
+        print(f"--- Starting configuration: input={n_input}, sum={n_sum}, rank={rank}, initial_batch={initial_batch_size} on {device}, sampling: {pivot} ---", flush=True)
 
         try:
             # --- Variables to store results from each sequential run ---

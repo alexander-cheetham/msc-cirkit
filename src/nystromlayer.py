@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from .sampler import kron_l2_sampler
+from .sampler import kron_l2_sampler,  kron_cur_plan_torch_min
 
 class NystromSumLayer_old(nn.Module):
     """
@@ -219,15 +219,23 @@ class NystromSumLayer(TorchSumLayer):
 
             U_lr, V_lr = [], []
 
-            for f in range(F_):
-                M_f = base_weight[f]
-                def kron_block(rows, cols):
+            def kron_block(rows, cols):
                     r0 = torch.div(rows, K_o_base, rounding_mode="floor")
                     r1 = rows % K_o_base
                     c0 = torch.div(cols, K_i_base, rounding_mode="floor")
                     c1 = cols % K_i_base
                     return self.semiring.mul(M_f[r0][:, c0], M_f[r1][:, c1])
                     #return M_f[r0][:, c0]* M_f[r1][:, c1]
+
+            # Helper: map pair indices -> flat Kronecker indices
+            def _flat_pairs_to_indices(pairs, base):
+                # pairs: (s,2) with entries in [0..base-1]
+                return pairs[:, 0] * base + pairs[:, 1]
+            
+
+            for f in range(F_):
+                M_f = base_weight[f]
+                
 
                 nystrom_success = False
                 for attempt in range(MAX_RETRIES):
@@ -239,9 +247,24 @@ class NystromSumLayer(TorchSumLayer):
                         if self.pivot == "l2":
                            I = kron_l2_sampler(M_f, target_rank=s, axis=0)
                            J = kron_l2_sampler(M_f, target_rank=s, axis=1)
+                           row_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
+                           col_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
+                        elif self.pivot == "cur":
+                            M_for_sampling = M_f.to(torch.float32)
+                            plan = kron_cur_plan_torch_min(
+                                M_for_sampling, r=s, c=s, k=min(s, K_o_base, K_i_base),
+                                generator=None, return_flat_indices=False
+                            )
+                            I = _flat_pairs_to_indices(plan["I_pairs"].to(M_f.device), K_o_base)
+                            J = _flat_pairs_to_indices(plan["J_pairs"].to(M_f.device), K_i_base)
+                            row_scale = plan["row_scale"].to(device=M_f.device, dtype=M_f.dtype)
+                            col_scale = plan["col_scale"].to(device=M_f.device, dtype=M_f.dtype)
+
                         else: # Fallback to uniform or original L2
                            I = torch.randperm(K_o, device=M_f.device)[:s]
                            J = torch.randperm(K_i, device=M_f.device)[:s]
+                           row_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
+                           col_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
 
                     # --- 2. Form Pivot Matrix and Check Condition ---
                     A = kron_block(I, J)
@@ -264,9 +287,12 @@ class NystromSumLayer(TorchSumLayer):
                         B_blk = kron_block(I, J_c)
 
                         C = torch.cat([A, F_blk], dim=0)
+                        C = C * col_scale[None, :]      
                         R = torch.cat([A, B_blk], dim=1)
+                        R = row_scale[:, None] * R   
                         
-                        A_pinv = torch.linalg.pinv(A_float32, rcond=1e-6)
+                        A = (row_scale[:, None] * A) * col_scale[None, :].to(torch.float32)
+                        A_pinv = torch.linalg.pinv(A, rcond=1e-6)
 
                         U_f = C
                         V_f = (A_pinv @ R).T
@@ -286,13 +312,20 @@ class NystromSumLayer(TorchSumLayer):
                     
                     # Compute its SVD and truncate to the target rank 's'
                     U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f.to(torch.float32))
-                    U_svd_s = U_svd[:, :s]
-                    S_svd_s = S_svd[:s]
-                    Vh_svd_s = Vh_svd[:s, :]
-                    
+                    actual_rank = min(s, S_svd.shape[0])
+                    # If the actual rank is 0, it means the matrix is a zero matrix. Handle this case.
+                    if actual_rank == 0:
+                        print(f"Warning: Layer produced a zero matrix. Skipping factorization.")
+
+                    # Use the actual_rank for slicing
+                    U_svd_s = U_svd[:, :actual_rank]
+                    S_svd_s = S_svd[:actual_rank]
+                    Vh_svd_s = Vh_svd[:actual_rank, :]
+
+                    # --- END MODIFICATION ---
+
                     # Create U and V factors from the SVD components.
-                    # W ≈ U_s @ diag(S_s) @ Vh_s
-                    # We split the singular values across U and V for numerical balance.
+                    # This part of your code is correct and does not need to change.
                     S_sqrt = torch.sqrt(S_svd_s)
                     U_f = U_svd_s @ torch.diag(S_sqrt)
                     V_f = (Vh_svd_s.T @ torch.diag(S_sqrt))
