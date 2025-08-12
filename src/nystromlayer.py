@@ -190,7 +190,7 @@ class NystromSumLayer(TorchSumLayer):
         """
         # --- Constants for the retry mechanism ---
         MAX_RETRIES = 3
-        CONDITION_THRESHOLD = 1e5 # Threshold for what's considered ill-conditioned
+        CONDITION_THRESHOLD = 1.0 # Threshold for what's considered ill-conditioned
 
         with torch.no_grad():                                   # saves memory
             # ``original_layer.weight`` encodes the Kronecker product of a

@@ -414,6 +414,8 @@ class TorchCategoricalLayer(TorchExpFamilyLayer):
                 size=(self.num_folds, 1, self.num_output_units), device=self.probs.device
             )
         logits = self.logits()
+        #return torch.logsumexp(self.logits(), dim=2).unsqueeze(1)
+        print(f"logits shape: {logits.shape}")
         return torch.sum(torch.logsumexp(logits, dim=3), dim=2).unsqueeze(dim=1)
 
     def sample(self, num_samples: int = 1) -> Tensor:
