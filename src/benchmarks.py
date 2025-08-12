@@ -25,6 +25,10 @@ from .circuit_types import CIRCUIT_BUILDERS
 from cirkit.symbolic.io import plot_circuit
 from torch.cuda.amp import autocast, GradScaler
 from datetime import datetime
+from cirkit.backend.torch.queries import IntegrateQuery
+from cirkit.backend.torch.layers import TorchCategoricalLayer
+from cirkit.utils.scope import Scope
+import faulthandler
 
 LN2 = np.log(2.0)
 import os
@@ -53,17 +57,18 @@ def sync_sumlayer_weights(
     original: nn.Module, nystrom: nn.Module, *, pivot: str = "uniform", rank: int | None = None
 ) -> None:
     """Copy weights from ``original`` to ``nystrom`` for matching layers."""
-    orig_layers = [m for m in original.modules() if isinstance(m, TorchSumLayer)]
-    nys_layers = [m for m in nystrom.modules() if isinstance(m, NystromSumLayer)]
-    if len(orig_layers) != len(nys_layers):
-        raise ValueError("Layer count mismatch when syncing weights")
+    # Sync for TorchSumLayer and NystromSumLayer
+    orig_sum_layers = [m for m in original.modules() if isinstance(m, TorchSumLayer)]
+    nys_sum_layers = [m for m in nystrom.modules() if isinstance(m, NystromSumLayer)]
+    if len(orig_sum_layers) != len(nys_sum_layers):
+        print(f"{len(orig_sum_layers)},{len(nys_sum_layers)}")
+        raise ValueError("Sum layer count mismatch when syncing weights")
 
-    import faulthandler
     faulthandler.enable(all_threads=True)
-    total = len(orig_layers)
-    interval = max(1, total // 4)
+    total_sum = len(orig_sum_layers)
+    interval_sum = max(1, total_sum // 4)
 
-    for i, (o, n) in enumerate(zip(orig_layers, nys_layers), start=1):
+    for i, (o, n) in enumerate(zip(orig_sum_layers, nys_sum_layers), start=1):
         start = time.perf_counter()
         faulthandler.dump_traceback_later(30, repeat=False)
         try:
@@ -75,15 +80,39 @@ def sync_sumlayer_weights(
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
         except Exception as e:
-            print(f"[{datetime.now()}] Exception on layer {i}/{total}: {e}", flush=True)
+            print(f"[{datetime.now()}] Exception on sum layer {i}/{total_sum}: {e}", flush=True)
             raise
         finally:
             faulthandler.cancel_dump_traceback_later()
 
-        if i % interval == 0 or i == total:
-            pct = int(100 * i / total)
-            print(f"[{datetime.now()}] Weight Sync Progress: {pct}% ({i}/{total})", flush=True)
+        if i % interval_sum == 0 or i == total_sum:
+            pct = int(100 * i / total_sum)
+            print(f"[{datetime.now()}] Sum Layer Weight Sync Progress: {pct}% ({i}/{total_sum})", flush=True)
 
+    # --- Step 2: Sync Categorical Layers (NEW & IMPROVED LOGIC) ---
+    print("\n--- Syncing Categorical Layer (logits/probs) by Parameter Name ---", flush=True)
+
+    # Create a dictionary of the original model's parameters for fast lookup.
+    # This is the 'a' from your working snippet.
+    original_params = dict(original.named_parameters())
+
+    copied_params_count = 0
+    with torch.no_grad():
+        # Iterate through the Nystrom model's named parameters.
+        for name, nys_param in nystrom.named_parameters():
+            # Check if the parameter is a logit or probability tensor by its name.
+            if 'logits' in name or 'probs' in name:
+                if name in original_params:
+                    # Use the proven method: copy the data directly.
+                    # .copy_() is a safe, in-place operation.
+                    orig_param = original_params[name]
+                    nys_param.data.copy_(orig_param.data)
+                    copied_params_count += 1
+                else:
+                    # This warning is helpful for debugging architecture mismatches.
+                    print(f"Warning: Parameter '{name}' found in Nystrom model but not in original.")
+    
+    print(f"--- Finished syncing. Copied {copied_params_count} categorical parameters. ---\n",)
 
 class WandbCircuitBenchmark:
     """Benchmark suite with wandb integration."""
@@ -218,6 +247,9 @@ class WandbCircuitBenchmark:
                             return {"status": "oom_failure"}
                         continue
                     else: raise e
+            iq_orig = IntegrateQuery(original_circuit)
+            sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
+            Z_bok_orig = iq_orig(sample_image.to(device), integrate_vars=Scope(original_circuit.scope)).to("cpu")
             
             # --- Free up memory ---
             #del test_input
@@ -280,8 +312,11 @@ class WandbCircuitBenchmark:
                         physical_batch_size //= 2 # Reduce batch size for both models and restart
                         print(f"[{datetime.now()}] Batch size is too large even for Nystrom model. Restarting entire benchmark for this config with new batch size {physical_batch_size}", flush=True)
                         # We need to restart the whole function with a smaller batch size
-                        return benchmark_single_configuration(self, n_input, n_sum, rank, physical_batch_size, step, pivot=pivot, depth=depth)
+                        return self.benchmark_single_configuration(self, n_input, n_sum, rank, physical_batch_size, step, pivot=pivot, depth=depth)
                     else: raise e
+            iq_nystrom = IntegrateQuery(nystrom_circuit)
+            sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
+            Z_bok_nys = iq_nystrom(sample_image.to(device), integrate_vars=Scope(nystrom_circuit.scope)).to("cpu")
             
             # --- Free up memory ---
             del nystrom_circuit
@@ -294,7 +329,7 @@ class WandbCircuitBenchmark:
             # =====================================================================
             stage = "final_metric_calculation"
             print(f"[{datetime.now()}] Stage: {stage}", flush=True)
-            nll_orig, nll_nystrom = -orig_output, -nystrom_output
+            nll_orig, nll_nystrom = -(orig_output - Z_bok_orig[0][0].real), -(nystrom_output - Z_bok_nys[0][0].real)
             nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
             nll_diff = nll_diff_per_sample.mean()
             data_dim = n_input ** 2

@@ -190,14 +190,15 @@ class NystromSumLayer(TorchSumLayer):
         """
         # --- Constants for the retry mechanism ---
         MAX_RETRIES = 3
-        CONDITION_THRESHOLD = 1e5 # Threshold for what's considered ill-conditioned
+        CONDITION_THRESHOLD = 1e7 # Threshold for what's considered ill-conditioned
 
         with torch.no_grad():                                   # saves memory
             # ``original_layer.weight`` encodes the Kronecker product of a
             # smaller matrix with itself.  Extract that base matrix so we can
             # compute required sub-blocks without building the full product.
             if hasattr(original_layer.weight, "_nodes"):
-                base_weight = original_layer.weight._nodes[0]()
+                #base_weight = original_layer.weight._nodes[0]()
+                base_weight = type(original_layer.weight)(original_layer.weight._nodes, original_layer.weight._in_nodes, [original_layer.weight._nodes[-2]])()
                 # base_weight = torch.nn.functional.softmax(
                 #     base_weight, dim=-1
                 # )  # ensure probabilities sum to 1

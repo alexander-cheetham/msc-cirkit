@@ -106,30 +106,10 @@ def kron_l2_sampler(
                 idx2 = torch.multinomial(probs, num, replacement=True)
             return (idx1 * dim + idx2).long()
 
-        need = target_rank + oversampling_p
+        need = target_rank 
         idx = sample_once(need)
-        uniq = torch.unique(idx)
 
-        extra_iters = 0
-        while uniq.numel() < target_rank:
-            if extra_iters >= max_extra_iters:
-                # fallback: fill remaining with uniformly random unique indices from full space
-                remaining = target_rank - uniq.numel()
-                all_indices = torch.arange(dim * dim, device=A.device)
-                # shuffle a bit (use same generator if available)
-                if gen is not None:
-                    perm = all_indices[torch.randperm(all_indices.size(0), generator=gen)]
-                else:
-                    perm = all_indices[torch.randperm(all_indices.size(0))]
-                fallback = perm[:remaining]
-                uniq = torch.unique(torch.cat([uniq, fallback]))
-                break
-            need = target_rank - uniq.numel() + oversampling_p
-            extra = sample_once(need)
-            uniq = torch.unique(torch.cat([uniq, extra]))
-            extra_iters += 1
-
-        return uniq[:target_rank]
+        return idx
 
 
 # kron_cur_min.py
