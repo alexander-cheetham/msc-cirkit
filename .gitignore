@@ -4,3 +4,10 @@
 wandb/
 datasets/
 __pycache__/
+
+
+results/
+logs/
+patches/
+.data/
+model_cache/
