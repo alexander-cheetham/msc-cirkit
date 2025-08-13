@@ -43,7 +43,7 @@ def train_and_save(args):
         return
 
     # Build symbolic circuit
-    builder = CIRCUIT_BUILDERS['MNIST']
+    builder = CIRCUIT_BUILDERS[config.circuit_structure]
     symbolic = builder(
         region_graph=config.region_graph,
         num_input_units=n_in,
