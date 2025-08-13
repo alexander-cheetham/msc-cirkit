@@ -311,8 +311,8 @@ class NystromSumLayer(TorchSumLayer):
                     # Create U and V factors from the SVD components.
                     # This part of your code is correct and does not need to change.
                     S_sqrt = torch.sqrt(S_svd_s)
-                    U_f = U_svd_s @ torch.diag(S_sqrt)
-                    V_f = (Vh_svd_s.T @ torch.diag(S_sqrt))
+                    U_f = U_svd_s @ torch.diag(S_sqrt).to(U_svd_s.dtype)
+                    V_f = (Vh_svd_s.T @ torch.diag(S_sqrt).to(Vh_svd_s.dtype))
                     
                     U_lr.append(U_f)
                     V_lr.append(V_f)
