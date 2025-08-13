@@ -35,7 +35,7 @@ def main():
 
     parser.add_argument(
         "--circuit-structure",
-        choices=["one_sum", "deep_cp_circuit", "MNIST"],
+        choices=["one_sum", "deep_cp_circuit", "MNIST","MNIST_COMPLEX"],
         default="one_sum",
         help="Type of circuit to benchmark",
     )

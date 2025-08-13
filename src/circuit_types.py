@@ -77,9 +77,34 @@ def make_squarable_mnist_circuit(
         raise ValueError("The provided region_graph produces an incompatible circuit.")
     return circuit
 
+def make_squarable_mnist_circuit_complex(
+    *,
+    region_graph,
+    num_input_units: Optional[int] = 64,
+    num_sum_units: Optional[int] = 64,
+) -> Circuit:
+    """Construct a symbolic circuit tailored for MNIST data.
+
+    region_graph: any region graph object compatible with the circuit.
+    """
+    circuit = data_modalities.image_data(
+        (1, 28, 28),
+        region_graph=region_graph,
+        input_layer="categorical",
+        num_input_units=num_input_units,
+        sum_product_layer="cp",
+        num_sum_units=num_sum_units,
+        num_classes=1,
+        sum_weight_param=Parameterization(dtype='complex', initialization='uniform')
+    )
+    if not are_compatible(circuit, circuit):
+        raise ValueError("The provided region_graph produces an incompatible circuit.")
+    return circuit
+
 
 CIRCUIT_BUILDERS: Dict[str, Callable[..., Circuit]] = {
     "one_sum": define_circuit_one_sum,
     "deep_cp_circuit": make_random_binary_tree_circuit,
     "MNIST": make_squarable_mnist_circuit,
+    "MNIST_COMPLEX": make_squarable_mnist_circuit_complex,
 }
