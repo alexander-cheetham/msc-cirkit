@@ -193,26 +193,9 @@ class NystromSumLayer(TorchSumLayer):
         CONDITION_THRESHOLD = 1e7 # Threshold for what's considered ill-conditioned
 
         with torch.no_grad():                                   # saves memory
-            # ``original_layer.weight`` encodes the Kronecker product of a
-            # smaller matrix with itself.  Extract that base matrix so we can
-            # compute required sub-blocks without building the full product.
-            if hasattr(original_layer.weight, "_nodes"):
-                #base_weight = original_layer.weight._nodes[0]()
-                base_weight = type(original_layer.weight)(original_layer.weight._nodes, original_layer.weight._in_nodes, [original_layer.weight._nodes[-2]])()
-                # base_weight = torch.nn.functional.softmax(
-                #     base_weight, dim=-1
-                # )  # ensure probabilities sum to 1
-                # assert torch.equal(
-                #     torch.kron(base_weight, base_weight),
-                #     original_layer.weight()
-                # ), "Weight tensors differ!" 
 
-                # print(f"kronecker of base weight matches materialised ORIGINAL CIRCUIT")
-            else:
-                base_weight = original_layer.weight()
-            # Prepare weights depending on the semiring. For log-space
-            # computation ("lse-sum"), convert the logits to log-probabilities;
-            # otherwise operate on probabilities in linear space.
+            base_weight = type(original_layer.weight)(original_layer.weight._nodes, original_layer.weight._in_nodes, [original_layer.weight._nodes[-2]])()
+            
             F_, K_o_base, K_i_base = base_weight.shape
             K_o = K_o_base * K_o_base
             K_i = K_i_base * K_i_base
