@@ -1,4 +1,4 @@
-# MSc Cirkit: Low-Rank Approximation for Kronecker-Product Layers
+# Low-Rank Approximation for Kronecker-Product Layers in the `cirkit` Library
 
 This project implements and benchmarks a CUR-based approximation for linear layers with Kronecker-product weights, specifically targeting layers from the `cirkit` library. The goal is to accelerate the forward pass and reduce the memory footprint of these layers while maintaining acceptable accuracy.
 
