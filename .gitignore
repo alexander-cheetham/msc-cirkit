@@ -1,6 +1,7 @@
 # Jupyter Notebook
 .ipynb_checkpoints
 .venv
+.env
 wandb/
 datasets/
 __pycache__/
