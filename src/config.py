@@ -14,15 +14,32 @@ class BenchmarkConfig:
     ranks: List[int] = field(default_factory=lambda: [5, 10, 20, 30, 50])
     use_dynamic_ranks: bool = True
     rank_percentages: List[float] = field(
-        default_factory=lambda: [0.01,0.1,0.2, 0.4, 0.6, 0.8]
+        default_factory=lambda: [0.1,0.2,0.3,0.6,]#1,0.2, 0.3, 0.6,]
     )
+
+    # Pivot selection strategy for Nyström approximation
+    pivot: str = field(
+        default="uniform",
+        metadata={"help": "Pivot strategy for Nyström layers ('uniform' or 'l2')"},
+    )
+
+    # Optional list of Nyström sampling methods to benchmark.  If ``None``
+    # only ``pivot`` is used.  This allows running multiple Nyström
+    # approximations (e.g. both ``'uniform'`` and ``'l2'``) in a single
+    # benchmark while retaining backward compatibility with older
+    # configurations that specified a single ``pivot``.
+    approximation_methods: Optional[List[str]] = None
     
     # Training settings
     batch_sizes: List[int] = field(default_factory=lambda: [32, 64, 128])
     num_warmup: int = 2
-    num_trials: int = 20
+    num_trials: int = 3
     
     # Hardware
+    use_amp: bool = field(
+        default=False,
+        metadata={"help": "Enable Automatic Mixed Precision (AMP) for GPU runs"}
+    )
     device: str = field(default_factory=lambda: 'cuda' if torch.cuda.is_available() else 'cpu')
     
     # Experiment metadata for wandb

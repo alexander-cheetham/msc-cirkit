@@ -35,7 +35,7 @@ def main():
 
     parser.add_argument(
         "--circuit-structure",
-        choices=["one_sum", "deep_cp_circuit", "MNIST"],
+        choices=["one_sum", "deep_cp_circuit", "MNIST","MNIST_COMPLEX"],
         default="one_sum",
         help="Type of circuit to benchmark",
     )
@@ -51,6 +51,24 @@ def main():
         default="quad-tree-4",
         help="Region graph to use for MNIST circuits",
     )
+    # Allow benchmarking multiple Nyström sampling strategies in a single run.
+    # ``--pivots`` accepts one or more methods.  For backward compatibility a
+    # legacy ``--pivot`` argument is also recognised to specify a single
+    # method.
+    parser.add_argument(
+        "--pivots",
+        nargs="+",
+        choices=["uniform", "l2","cur"],
+        default=None,
+        help="Pivot strategies to benchmark (e.g. --pivots uniform l2)",
+    )
+    parser.add_argument(
+        "--pivot",
+        type=str,
+        choices=["uniform", "l2"],
+        default=None,
+        help="Legacy single pivot strategy",
+    )
     parser.add_argument(
         "--no-dynamic-ranks",
         dest="use_dynamic_ranks",
@@ -60,6 +78,16 @@ def main():
     parser.set_defaults(use_dynamic_ranks=True)
 
     args = parser.parse_args()
+
+    # Determine which pivot strategies to benchmark.  ``--pivots`` takes
+    # precedence; if absent we fall back to the legacy ``--pivot`` argument and
+    # finally to both methods.
+    if args.pivots is not None:
+        pivots = args.pivots
+    elif args.pivot is not None:
+        pivots = [args.pivot]
+    else:
+        pivots = ["uniform", "l2", "cur"]
     
     # config = BenchmarkConfig(
     #     input_units=[10, 20, 30, 40],
@@ -92,7 +120,7 @@ def main():
             input_units=units,
             sum_units=units,
             ranks=[50, 100, 200, 400, 600, 2000,3200, 5000, 10000, 20000],
-            batch_sizes=[256, 512],
+            batch_sizes=[256],
             project_name="kronecker-vs-nystrom",
             experiment_name="full_benchmark_pow2",
             powers_of_two=True,
@@ -101,13 +129,15 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            pivot=pivots[0],
+            approximation_methods=pivots,
         )
     else:
         config = BenchmarkConfig(
             input_units=[20, 50, 70, 100, 120,],
             sum_units=[20, 50, 70, 100, 120,],
             ranks=[50, 100, 200, 400, 600, 2000, 5000, 10000, 20000],
-            batch_sizes=[256, 512],
+            batch_sizes=[256,512],
             project_name="kronecker-vs-nystrom",
             experiment_name="full_benchmark_very_large_more_ranks",
             powers_of_two=False,
@@ -116,6 +146,8 @@ def main():
             circuit_structure=args.circuit_structure,
             depth=args.depth,
             region_graph=args.region_graph,
+            pivot=pivots[0],
+            approximation_methods=pivots,
         )
     
     print(f"Starting wandb experiment on {config.device}")
@@ -131,7 +163,9 @@ def main():
         builder_kwargs["region_graph"] = config.region_graph
 
     symbolic_circuit = builder(**builder_kwargs)
+    print("pre benchmark")
     benchmark = WandbCircuitBenchmark(config, symbolic_circuit)
+    print("starting benchmark")
     results = benchmark.run_full_benchmark()
     
     # Save artifacts
