@@ -150,8 +150,8 @@ class WandbCircuitBenchmark:
     def create_test_input(self, batch_size: int, input_dim: int, device: str):
         num_variables = input_dim**2
         print(f"Creating test input of size {batch_size} on {device}", flush=True)
-        if self.config.circuit_structure == "MNIST":
-            print("MNIST circuit structure detected", flush=True)
+        if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
+            print(f"{self.config.circuit_structure} circuit structure detected", flush=True)
             if not hasattr(self, "_mnist_dataset"):
                 try:
                     self._mnist_dataset = datasets.MNIST(root="./.data", train=False, download=True)
@@ -233,7 +233,7 @@ class WandbCircuitBenchmark:
                     orig_times = self.time_forward_pass(original_circuit, test_input, self.config.num_warmup, self.config.num_trials)
                     
                     with torch.no_grad():
-                        if self.config.circuit_structure == "MNIST":
+                        if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
                             transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
                             data_test = datasets.MNIST(root="./.data", train=False, download=True, transform=transform)
                             test_dataloader = DataLoader(data_test, shuffle=False, batch_size=physical_batch_size)
@@ -287,7 +287,7 @@ class WandbCircuitBenchmark:
                       # Free memory after timing
 
                     with torch.no_grad():
-                        if self.config.circuit_structure == "MNIST":
+                        if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
                             del test_input
                             transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
                             data_test = datasets.MNIST(root="./.data", train=False, download=True, transform=transform)
