@@ -1,10 +1,10 @@
-# MSc Cirkit: Nyström Approximation for Kronecker-Product Layers
+# MSc Cirkit: Low-Rank Approximation for Kronecker-Product Layers
 
-This project implements and benchmarks a Nyström-based approximation for linear layers with Kronecker-product weights, specifically targeting layers from the `cirkit` library. The goal is to accelerate the forward pass and reduce the memory footprint of these layers while maintaining acceptable accuracy.
+This project implements and benchmarks a CUR-based approximation for linear layers with Kronecker-product weights, specifically targeting layers from the `cirkit` library. The goal is to accelerate the forward pass and reduce the memory footprint of these layers while maintaining acceptable accuracy.
 
 ## Key Features
 
-*   **Nyström-based Low-Rank Approximation**: Replaces `TorchSumLayer` from `cirkit` with a `NystromSumLayer` that uses a low-rank approximation of the weight matrix.
+*   **CUR-based Low-Rank Approximation**: Replaces `TorchSumLayer` from `cirkit` with a `NystromSumLayer` that uses a low-rank approximation of the weight matrix.
 *   **Kronecker Product Support**: The Nyström approximation is designed to work with weights that are Kronecker products of smaller matrices, without materializing the full weight matrix.
 *   **Multiple Pivot Selection Strategies**: Implements several pivot selection strategies for the Nyström method, including:
     *   `uniform`: Uniform random sampling of columns.
