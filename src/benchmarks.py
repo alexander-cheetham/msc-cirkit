@@ -210,12 +210,18 @@ class WandbCircuitBenchmark:
             stage = "original_model_benchmark"
             print(f"[{datetime.now()}] --- Benchmarking ORIGINAL model ---", flush=True)
             original_circuit = compile_symbolic(symbolic, device=device, rank=None, opt=False)
-            if self.config.circuit_structure == "MNIST":
-                cache_path = f"./model_cache/checkpoints/mnist_{n_input}_{n_sum}_epoch10.pt"
-                if os.path.exists(cache_path):
-                    original_circuit.load_state_dict(torch.load(cache_path, map_location=device)["model_state_dict"])
-                else:
+            if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
+                suffix = "mnist" if self.config.circuit_structure == "MNIST" else "mnist_complex"
+                cache_path = f"./model_cache/checkpoints/{suffix}_{n_input}_{n_sum}_epoch10.pt"
+
+                if not os.path.exists(cache_path):
                     raise FileNotFoundError(f"Checkpoint not found at {cache_path}")
+
+                checkpoint = torch.load(cache_path, map_location=device)
+                original_circuit.load_state_dict(checkpoint["model_state_dict"])
+
+
+
 
             physical_batch_size = initial_batch_size
             while physical_batch_size >= 1:
@@ -422,7 +428,7 @@ class WandbCircuitBenchmark:
                                     builder_kwargs = {"num_input_units": n_input, "num_sum_units": n_sum}
                                     if self.config.circuit_structure == "deep_cp_circuit":
                                         builder_kwargs["depth"] = depth
-                                    if self.config.circuit_structure == "MNIST":
+                                    if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
                                         builder_kwargs["region_graph"] = self.config.region_graph
                                     
                                     self.base_symbolic_circuit = builder(**builder_kwargs)

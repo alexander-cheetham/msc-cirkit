@@ -159,7 +159,7 @@ def main():
     }
     if config.circuit_structure == "deep_cp_circuit":
         builder_kwargs["depth"] = config.depth
-    if config.circuit_structure == "MNIST":
+    if config.circuit_structure == "MNIST" or config.circuit_structure == "MNIST_COMPLEX":
         builder_kwargs["region_graph"] = config.region_graph
 
     symbolic_circuit = builder(**builder_kwargs)
