@@ -234,7 +234,7 @@ class NystromSumLayer(TorchSumLayer):
                            row_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
                            col_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
                         elif self.pivot == "cur":
-                            M_for_sampling = M_f.to(torch.float32)
+                            M_for_sampling = M_f.to(torch.complex64)
                             plan = kron_cur_plan_torch_min(
                                 M_for_sampling, r=s, c=s, k=min(s, K_o_base, K_i_base),
                                 generator=None, return_flat_indices=False
