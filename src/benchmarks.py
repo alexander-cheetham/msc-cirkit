@@ -329,7 +329,7 @@ class WandbCircuitBenchmark:
                         physical_batch_size //= 2 # Reduce batch size for both models and restart
                         print(f"[{datetime.now()}] Batch size is too large even for Nystrom model. Restarting entire benchmark for this config with new batch size {physical_batch_size}", flush=True)
                         # We need to restart the whole function with a smaller batch size
-                        return self.benchmark_single_configuration(self, n_input, n_sum, rank, physical_batch_size, step, pivot=pivot, depth=depth)
+                        return self.benchmark_single_configuration(n_input, n_sum, rank, physical_batch_size, step, pivot=pivot, depth=depth)
                     else: raise e
             iq_nystrom = IntegrateQuery(nystrom_circuit)
             sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
