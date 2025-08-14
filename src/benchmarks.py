@@ -198,6 +198,7 @@ class WandbCircuitBenchmark:
             # --- Variables to store results from each sequential run ---
             orig_times, nystrom_times = None, None
             orig_output, nystrom_output = None, None
+            orig_memory, nystrom_memory = 0, 0
             
             # Build the base symbolic circuit once
             stage = "symbolic_compilation"
@@ -232,6 +233,11 @@ class WandbCircuitBenchmark:
                     
                     orig_times = self.time_forward_pass(original_circuit, test_input, self.config.num_warmup, self.config.num_trials)
                     
+                    def orig_forward():
+                        return original_circuit(test_input)
+                    device_type = 'cuda' if device.startswith('cuda') else 'cpu'
+                    orig_memory, _ = WandbMemoryProfiler.profile_gpu(orig_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(orig_forward)
+
                     with torch.no_grad():
                         if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
                             transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
@@ -283,6 +289,11 @@ class WandbCircuitBenchmark:
                     #test_input = self.create_test_input(physical_batch_size, n_input, device)
 
                     nystrom_times = self.time_forward_pass(nystrom_circuit, test_input, self.config.num_warmup, self.config.num_trials)
+
+                    def nystrom_forward():
+                        return nystrom_circuit(test_input)
+                    device_type = 'cuda' if device.startswith('cuda') else 'cpu'
+                    nystrom_memory, _ = WandbMemoryProfiler.profile_gpu(nystrom_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(nystrom_forward)
 
                       # Free memory after timing
 
@@ -360,7 +371,7 @@ class WandbCircuitBenchmark:
             })
             
             # Placeholder values for memory/flops, replace with your actual profilers if available
-            orig_memory, nystrom_memory, orig_flops, nystrom_flops = 0, 0, 1, 1
+            orig_flops, nystrom_flops = 1, 1
 
             speedup = orig_times["mean"] / nystrom_times["mean"]
             theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
