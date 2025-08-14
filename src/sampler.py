@@ -158,8 +158,8 @@ def kron_cur_plan_torch_min(
 
     # 1) leverage on A (rank-k or statistical)
     row_lev, col_lev, sum_val = leverage_scores_A_torch(A, k=k)
-    p_row_1D = (row_lev / row_lev.sum()).to(device=device, dtype=dtype)
-    p_col_1D = (col_lev / col_lev.sum()).to(device=device, dtype=dtype)
+    p_row_1D = (row_lev / row_lev.sum()).to(device=device, dtype=torch.float)
+    p_col_1D = (col_lev / col_lev.sum()).to(device=device, dtype=torch.float)
 
     # 2) sample pair indices for F using product distributions (no m^2/n^2 vectors)
     I1 = torch.multinomial(p_row_1D, num_samples=r, replacement=True, generator=generator)

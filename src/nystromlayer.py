@@ -234,7 +234,7 @@ class NystromSumLayer(TorchSumLayer):
                            row_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
                            col_scale = torch.ones(s, dtype=M_f.dtype, device=M_f.device)
                         elif self.pivot == "cur":
-                            M_for_sampling = M_f.to(torch.complex64)
+                            M_for_sampling = M_f
                             plan = kron_cur_plan_torch_min(
                                 M_for_sampling, r=s, c=s, k=min(s, K_o_base, K_i_base),
                                 generator=None, return_flat_indices=False
@@ -252,8 +252,7 @@ class NystromSumLayer(TorchSumLayer):
 
                     # --- 2. Form Pivot Matrix and Check Condition ---
                     A = kron_block(I, J)
-                    A_complex32 = A.to(torch.complex64)
-                    cond_num = torch.linalg.cond(A_complex32)
+                    cond_num = torch.linalg.cond(A)
 
                     #print(f"Attempt {attempt + 1}/{MAX_RETRIES}: Condition Number = {cond_num}")
 
@@ -275,7 +274,7 @@ class NystromSumLayer(TorchSumLayer):
                         R = torch.cat([A, B_blk], dim=1)
                         R = row_scale[:, None] * R   
                         
-                        A = (row_scale[:, None] * A) * col_scale[None, :].to(torch.complex64)
+                        A = (row_scale[:, None] * A) * col_scale[None, :]
                         A_pinv = torch.linalg.pinv(A, rcond=1e-6)
 
                         U_f = C
@@ -295,7 +294,7 @@ class NystromSumLayer(TorchSumLayer):
                     W_f = torch.kron(M_f, M_f)
                     
                     # Compute its SVD and truncate to the target rank 's'
-                    U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f.to(torch.complex64))
+                    U_svd, S_svd, Vh_svd = torch.linalg.svd(W_f)
                     actual_rank = min(s, S_svd.shape[0])
                     # If the actual rank is 0, it means the matrix is a zero matrix. Handle this case.
                     if actual_rank == 0:
