@@ -339,7 +339,7 @@ class WandbCircuitBenchmark:
             nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
             nll_diff = nll_diff_per_sample.mean()
             data_dim = n_input ** 2
-            if self.config.circuit_structure == "MNIST":
+            if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
                 data_dim = 784
             orig_bpd = (-orig_output.mean() / (data_dim * LN2)).item()
             nystrom_bpd = (-nystrom_output.mean() / (data_dim * LN2)).item()
