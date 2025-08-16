@@ -29,6 +29,9 @@ from cirkit.backend.torch.queries import IntegrateQuery
 from cirkit.backend.torch.layers import TorchCategoricalLayer
 from cirkit.utils.scope import Scope
 import faulthandler
+from torch.utils.data import DataLoader, TensorDataset
+import re
+import random
 
 LN2 = np.log(2.0)
 import os
@@ -37,6 +40,70 @@ try:
     wandb.require("legacy-service")
 except wandb.errors.UnsupportedError:
     pass
+
+
+def load_mnist_weights_for_one_sum(one_sum_circuit: torch.nn.Module, mnist_checkpoint_path: str, device: str):
+    """
+    Loads weights from a pre-trained MNIS circuit checkpoint into a one_sum circuit.
+    """
+    print(f"--- Loading MNIST weights for one_sum circuit from {mnist_checkpoint_path} ---")
+
+    # 1. Parse n_input and n_sum from the checkpoint path
+    match = re.search(r'mnist_(\d+)_(\d+)_epoch10.pt', os.path.basename(mnist_checkpoint_path))
+    if not match:
+        raise ValueError(f"Could not parse n_input and n_sum from checkpoint path: {mnist_checkpoint_path}")
+    mnist_n_input = int(match.group(1))
+    mnist_n_sum = int(match.group(2))
+    print(f"Inferred MNIST_COMPLEX model dimensions from checkpoint name: n_input={mnist_n_input}, n_sum={mnist_n_sum}")
+
+    # 2. Load the state dictionary from the MNIST checkpoint
+    checkpoint = torch.load(mnist_checkpoint_path, map_location=device)
+    
+    # 3. Create a temporary instance of the MNIST_COMPLEX circuit to hold the weights
+    mnist_builder = CIRCUIT_BUILDERS["MNIST"] 
+    mnist_symbolic = mnist_builder(num_input_units=mnist_n_input, num_sum_units=mnist_n_sum,region_graph="quad-tree-4")
+    mnist_symbolic = SF.multiply(mnist_symbolic, mnist_symbolic)  # Scale the weights by 0.5
+    mnist_circuit = compile_symbolic(mnist_symbolic, device=device)
+    mnist_circuit.load_state_dict(checkpoint["model_state_dict"])
+
+    # 4. Find all TorchSumLayers in the loaded MNIST_COMPLEX circuit
+    all_source_sum_layers = [m for m in mnist_circuit.modules() if isinstance(m, TorchSumLayer)]
+    if not all_source_sum_layers:
+        raise ValueError("No TorchSumLayer found in the loaded MNIST circuit.")
+    
+    # Select a random TorchSumLayer to be the source
+    source_sum_layer = random.choice(all_source_sum_layers)
+    print(f"Randomly selected a TorchSumLayer to copy weights from.")
+
+    # 5. Find the target TorchSumLayer in the one_sum circuit
+    target_sum_layer = next((m for m in one_sum_circuit.modules() if isinstance(m, TorchSumLayer)), None)
+    if target_sum_layer is None:
+        raise ValueError("No TorchSumLayer found in the target one_sum circuit.")
+    
+    # 6. Access the underlying TorchParameterNode and its torch.nn.Parameter.
+    if not source_sum_layer.weight.nodes:
+        raise ValueError("Source TorchParameter has no nodes.")
+    if not target_sum_layer.weight.nodes:
+        raise ValueError("Target TorchParameter has no nodes.")
+
+    source_node = source_sum_layer.weight.nodes[0]
+    target_node = target_sum_layer.weight.nodes[0]
+
+    source_param = next(source_node.parameters(), None)
+    target_param = next(target_node.parameters(), None)
+
+    if source_param is None:
+        raise ValueError("Source TorchParameterNode has no torch.nn.Parameter.")
+    if target_param is None:
+        raise ValueError("Target TorchParameterNode has no torch.nn.Parameter.")
+
+    # 7. Perform a direct data copy.
+    print(f"Copying weights of shape {source_param.data.shape}")
+    with torch.no_grad():
+        target_param.data.copy_(source_param.data)
+
+    print("--- Finished loading MNIST weights for one_sum circuit ---")
+    return one_sum_circuit
 
 
 def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, opt: bool = False):
@@ -182,6 +249,114 @@ class WandbCircuitBenchmark:
             times.append(start_time.elapsed_time(end_time) / 1000)
         return {"mean": np.mean(times), "std": np.std(times), "min": np.min(times), "max": np.max(times)}
 
+    def benchmark_nystrom_repeated(
+        self,
+        symbolic_circuit,
+        original_circuit,
+        test_input,
+        orig_output,
+        Z_bok_orig,
+        orig_times,
+        orig_memory,
+        n_input,
+        n_sum,
+        rank,
+        physical_batch_size,
+        pivot,
+        device,
+        reps,
+        data_test_mnist=None,
+    ):
+        """Benchmark Nystrom circuit multiple times and aggregate results."""
+        nystrom_metrics = {
+            "times": [],
+            "memories": [],
+            "nll_diffs": [],
+            "bpd_diffs": [],
+            "speedups": [],
+            "efficiencies": [],
+        }
+
+        for i in range(reps):
+            print(f"--- Nyström repetition {i+1}/{reps} ---")
+            torch.cuda.empty_cache()
+
+            nystrom_circuit = compile_symbolic(symbolic_circuit, device=device, opt=True, rank=rank)
+            sync_sumlayer_weights(original_circuit, nystrom_circuit, pivot=pivot, rank=rank)
+
+            nystrom_times = self.time_forward_pass(nystrom_circuit, test_input, self.config.num_warmup, self.config.num_trials)
+
+            def nystrom_forward():
+                return nystrom_circuit(test_input)
+            device_type = 'cuda' if device.startswith('cuda') else 'cpu'
+            nystrom_memory, _ = WandbMemoryProfiler.profile_gpu(nystrom_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(nystrom_forward)
+
+            with torch.no_grad():
+                if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
+                    data_test = data_test_mnist
+                    test_dataloader = DataLoader(data_test, shuffle=False, batch_size=physical_batch_size)
+                    nyst_batches = [nystrom_circuit(batch.to(device)).real for batch, _ in tqdm(test_dataloader, desc=f"Collating nystrom (rep {i+1})")]
+                    nystrom_output = torch.cat(nyst_batches, dim=0).to("cpu")
+                else:
+                    nyst_batches = []
+                    for j in range(0, test_input.size(0), physical_batch_size):
+                        batch = test_input[j : j + physical_batch_size]
+                        output_batch = nystrom_circuit(batch).real.to("cpu")
+                        nyst_batches.append(output_batch)
+                    nystrom_output = torch.cat(nyst_batches, dim=0)
+                    sample_for_dataset = test_input[0:1]
+                    fake_label = torch.ones(1, dtype=torch.long)
+                    data_test = TensorDataset(sample_for_dataset, fake_label)
+
+            iq_nystrom = IntegrateQuery(nystrom_circuit)
+            sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
+            Z_bok_nys = iq_nystrom(sample_image.to(device), integrate_vars=Scope(nystrom_circuit.scope)).to("cpu")
+
+            del nystrom_circuit
+            if 'nyst_batches' in locals(): del nyst_batches
+            torch.cuda.empty_cache()
+
+            nll_orig = -(orig_output - Z_bok_orig[0][0].real)
+            nll_nystrom = -(nystrom_output - Z_bok_nys[0][0].real)
+            nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
+            nll_diff = nll_diff_per_sample.mean().item()
+
+            data_dim = n_input ** 2
+            if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
+                data_dim = 784
+            orig_bpd = (-orig_output.mean() / (data_dim * LN2)).item()
+            nystrom_bpd = (-nystrom_output.mean() / (data_dim * LN2)).item()
+            bpd_diff = abs(orig_bpd - nystrom_bpd)
+
+            speedup = orig_times["mean"] / nystrom_times["mean"]
+            theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
+            efficiency = speedup / theoretical_speedup
+
+            nystrom_metrics["times"].append(nystrom_times["mean"])
+            nystrom_metrics["memories"].append(nystrom_memory)
+            nystrom_metrics["nll_diffs"].append(nll_diff)
+            nystrom_metrics["bpd_diffs"].append(bpd_diff)
+            nystrom_metrics["speedups"].append(speedup)
+            nystrom_metrics["efficiencies"].append(efficiency)
+
+        aggregated_metrics = {
+            "time_mean": np.mean(nystrom_metrics["times"]),
+            "time_std": np.std(nystrom_metrics["times"]),
+            "time_min": np.min(nystrom_metrics["times"]),
+            "time_max": np.max(nystrom_metrics["times"]),
+            "memory_mean": np.mean(nystrom_metrics["memories"]),
+            "memory_std": np.std(nystrom_metrics["memories"]),
+            "nll_diff_mean": np.mean(nystrom_metrics["nll_diffs"]),
+            "nll_diff_std": np.std(nystrom_metrics["nll_diffs"]),
+            "bpd_diff_mean": np.mean(nystrom_metrics["bpd_diffs"]),
+            "bpd_diff_std": np.std(nystrom_metrics["bpd_diffs"]),
+            "speedup_mean": np.mean(nystrom_metrics["speedups"]),
+            "speedup_std": np.std(nystrom_metrics["speedups"]),
+            "efficiency_mean": np.mean(nystrom_metrics["efficiencies"]),
+            "efficiency_std": np.std(nystrom_metrics["efficiencies"]),
+        }
+        return aggregated_metrics
+
     def benchmark_single_configuration(
         self, n_input: int, n_sum: int, rank: int, initial_batch_size: int, step: int, *,
         pivot: str, depth: int | None = None,
@@ -211,6 +386,14 @@ class WandbCircuitBenchmark:
             stage = "original_model_benchmark"
             print(f"[{datetime.now()}] --- Benchmarking ORIGINAL model ---", flush=True)
             original_circuit = compile_symbolic(symbolic, device=device, rank=None, opt=False)
+            
+            # if self.config.circuit_structure == "one_sum":
+            #     mnist_checkpoint_path = f"./model_cache/checkpoints/mnist_{n_input}_{n_sum}_epoch10.pt"
+            #     if os.path.exists(mnist_checkpoint_path):
+            #         original_circuit = load_mnist_weights_for_one_sum(original_circuit, mnist_checkpoint_path, device)
+            #     else:
+            #         print(f"Info: MNIST_COMPLEX checkpoint not found at {mnist_checkpoint_path}. Using random weights for one_sum circuit.")
+            
             if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
                 suffix = "mnist" if self.config.circuit_structure == "MNIST" else "mnist_complex"
                 cache_path = f"./model_cache/checkpoints/{suffix}_{n_input}_{n_sum}_epoch10.pt"
@@ -220,9 +403,6 @@ class WandbCircuitBenchmark:
 
                 checkpoint = torch.load(cache_path, map_location=device)
                 original_circuit.load_state_dict(checkpoint["model_state_dict"])
-
-
-
 
             physical_batch_size = initial_batch_size
             while physical_batch_size >= 1:
@@ -247,6 +427,9 @@ class WandbCircuitBenchmark:
                             orig_output = torch.cat(orig_batches, dim=0).to("cpu")
                         else:
                             orig_output = original_circuit(test_input).real.to("cpu")
+                            sample_for_dataset = test_input[0:1]
+                            fake_label = torch.ones(1, dtype=torch.long)
+                            data_test = TensorDataset(sample_for_dataset, fake_label)
                     print(f"[{datetime.now()}] Success with ORIGINAL model, batch size {physical_batch_size}", flush=True)
                     break # Success
                 except RuntimeError as e:
@@ -263,134 +446,80 @@ class WandbCircuitBenchmark:
             sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
             Z_bok_orig = iq_orig(sample_image.to(device), integrate_vars=Scope(original_circuit.scope)).to("cpu")
             
-            # --- Free up memory ---
-            #del test_input
             if 'orig_batches' in locals(): del orig_batches
             torch.cuda.empty_cache()
-            print(f"[{datetime.now()}] Original model cleared from GPU memory.", flush=True)
+            print(f"[{datetime.now()}] Original model's results computed.", flush=True)
 
             # =====================================================================
-            #  Step 2: Benchmark the Nyström Circuit
+            #  Step 2: Benchmark the Nyström Circuit Repeatedly
             # =====================================================================
-            stage = "nystrom_model_benchmark"
-            print(f"[{datetime.now()}] --- Benchmarking NYSTRÖM model ---", flush=True)
+            stage = "nystrom_model_benchmark_repeated"
+            print(f"[{datetime.now()}] --- Benchmarking NYSTRÖM model ({self.config.reps} repetitions) ---", flush=True)
             
+            data_test_mnist = data_test if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX") else None
+            aggregated_metrics = self.benchmark_nystrom_repeated(
+                symbolic, original_circuit, test_input, orig_output, Z_bok_orig,
+                orig_times, orig_memory, n_input, n_sum, rank, physical_batch_size,
+                pivot, device, self.config.reps, data_test_mnist=data_test_mnist
+            )
             
-            nystrom_circuit = compile_symbolic(symbolic, device=device, opt=True, rank=rank)
-            print(f"[{datetime.now()}] Syncing weights for Nyström model...", flush=True)
-            sync_sumlayer_weights(original_circuit, nystrom_circuit, pivot=pivot, rank=rank)
-            del original_circuit # Free GPU memory
-            
-            # Batch size is already determined by the original model run. We must use the same.
-            while physical_batch_size >= 1:
-                try:
-                    print(f"[{datetime.now()}] Attempting NYSTROM with batch size: {physical_batch_size}", flush=True)
-                    torch.cuda.empty_cache()
-                    #test_input = self.create_test_input(physical_batch_size, n_input, device)
-
-                    nystrom_times = self.time_forward_pass(nystrom_circuit, test_input, self.config.num_warmup, self.config.num_trials)
-
-                    def nystrom_forward():
-                        return nystrom_circuit(test_input)
-                    device_type = 'cuda' if device.startswith('cuda') else 'cpu'
-                    nystrom_memory, _ = WandbMemoryProfiler.profile_gpu(nystrom_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(nystrom_forward)
-
-                      # Free memory after timing
-
-                    with torch.no_grad():
-                        if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
-                            del test_input
-                            transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
-                            data_test = datasets.MNIST(root="./.data", train=False, download=True, transform=transform)
-                            test_dataloader = DataLoader(data_test, shuffle=False, batch_size=physical_batch_size)
-                            nyst_batches = [nystrom_circuit(batch.to(device)).real for batch, _ in tqdm(test_dataloader, desc="Collating nystrom")]
-                            nystrom_output = torch.cat(nyst_batches, dim=0).to("cpu")
-                        else:
-                             # We will collect the results from each small batch here
-                            nyst_batches = []
-                            
-                            # Manually iterate through test_input in chunks of size 'physical_batch_size'
-                            for i in range(0, test_input.size(0), physical_batch_size):
-                                # Create a small batch by slicing the large tensor
-                                batch = test_input[i : i + physical_batch_size]
-
-                                # Process just this small batch (assuming nystrom_circuit expects it on a specific device)
-                                output_batch = nystrom_circuit(batch).real.to("cpu")
-                                nyst_batches.append(output_batch)
-
-                            # Combine the results from all the batches
-                            nystrom_output = torch.cat(nyst_batches, dim=0)
-                            del test_input
-                    print(f"[{datetime.now()}] Success with NYSTROM model, batch size {physical_batch_size}", flush=True)
-                    break # Success
-                except RuntimeError as e:
-                    if "out of memory" in str(e).lower():
-                        print(f"[{datetime.now()}] OOM on NYSTROM model with batch size {physical_batch_size}", flush=True)
-                        physical_batch_size //= 2 # Reduce batch size for both models and restart
-                        print(f"[{datetime.now()}] Batch size is too large even for Nystrom model. Restarting entire benchmark for this config with new batch size {physical_batch_size}", flush=True)
-                        # We need to restart the whole function with a smaller batch size
-                        return self.benchmark_single_configuration(n_input, n_sum, rank, physical_batch_size, step, pivot=pivot, depth=depth)
-                    else: raise e
-            iq_nystrom = IntegrateQuery(nystrom_circuit)
-            sample_image, _ = next(iter(DataLoader(data_test, batch_size=1)))
-            Z_bok_nys = iq_nystrom(sample_image.to(device), integrate_vars=Scope(nystrom_circuit.scope)).to("cpu")
-            
-            # --- Free up memory ---
-            del nystrom_circuit
-            if 'nyst_batches' in locals(): del nyst_batches
+            del original_circuit
+            del test_input
             torch.cuda.empty_cache()
-            print(f"[{datetime.now()}] Nystrom model cleared from GPU memory.", flush=True)
+            print(f"[{datetime.now()}] Nystrom benchmark repetitions complete.", flush=True)
 
             # =====================================================================
             #  Step 3: Calculate Final Metrics on CPU
             # =====================================================================
             stage = "final_metric_calculation"
             print(f"[{datetime.now()}] Stage: {stage}", flush=True)
-            nll_orig, nll_nystrom = -(orig_output - Z_bok_orig[0][0].real), -(nystrom_output - Z_bok_nys[0][0].real)
-            nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
-            nll_diff = nll_diff_per_sample.mean()
+            
             data_dim = n_input ** 2
             if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
                 data_dim = 784
             orig_bpd = (-orig_output.mean() / (data_dim * LN2)).item()
-            nystrom_bpd = (-nystrom_output.mean() / (data_dim * LN2)).item()
-            bpd_diff = abs(orig_bpd - nystrom_bpd)
-
-            print(f"[{datetime.now()}] Successfully completed run with batch size {physical_batch_size}", flush=True)
-
-                    
 
             # --- Final Logging and Metrics ---
             matrix_label = f"2^{int(np.log2(n_input**2))}" if self.config.powers_of_two and n_input == n_sum else f"{n_input**2}x{n_sum**2}"
             wandb.log({
                 "config/n_input": n_input, "config/n_sum": n_sum, "config/rank": rank,
-                "config/physical_batch_size": physical_batch_size, # Log the actual batch size that worked
+                "config/physical_batch_size": physical_batch_size,
                 "config/matrix_dims": matrix_label, "step": step, "config/pivot": pivot,
-                "accuracy/nll_diff": nll_diff.item(), "bpd/original": orig_bpd,
-                "bpd/nystrom": nystrom_bpd, "bpd/diff": bpd_diff
+                "accuracy/nll_diff_mean": aggregated_metrics["nll_diff_mean"],
+                "accuracy/nll_diff_std": aggregated_metrics["nll_diff_std"],
+                "bpd/original": orig_bpd,
+                "bpd/diff_mean": aggregated_metrics["bpd_diff_mean"],
+                "bpd/diff_std": aggregated_metrics["bpd_diff_std"],
+                "speedup/mean": aggregated_metrics["speedup_mean"],
+                "speedup/std": aggregated_metrics["speedup_std"],
+                "efficiency/mean": aggregated_metrics["efficiency_mean"],
+                "efficiency/std": aggregated_metrics["efficiency_std"],
+                "time/nystrom_mean_ms": aggregated_metrics["time_mean"] * 1000,
+                "time/nystrom_std_ms": aggregated_metrics["time_std"] * 1000,
+                "memory/nystrom_mean_mb": aggregated_metrics["memory_mean"],
+                "memory/nystrom_std_mb": aggregated_metrics["memory_std"],
             })
             
-            # Placeholder values for memory/flops, replace with your actual profilers if available
-            orig_flops, nystrom_flops = 1, 1
-
-            speedup = orig_times["mean"] / nystrom_times["mean"]
             theoretical_speedup = FLOPCounter.theoretical_speedup(n_sum, n_input, rank)
-            memory_reduction = 1 - (nystrom_memory / max(orig_memory, 1e-6))
-            efficiency = speedup / theoretical_speedup
+            memory_reduction = 1 - (aggregated_metrics["memory_mean"] / max(orig_memory, 1e-6))
 
-            self.summary_metrics["speedups"].append(speedup)
+            self.summary_metrics["speedups"].append(aggregated_metrics["speedup_mean"])
             self.summary_metrics["memory_reductions"].append(memory_reduction)
-            self.summary_metrics["nll_diffs"].append(nll_diff.item())
-            self.summary_metrics["efficiencies"].append(efficiency)
-            self.summary_metrics["bpd_diffs"].append(bpd_diff)
+            self.summary_metrics["nll_diffs"].append(aggregated_metrics["nll_diff_mean"])
+            self.summary_metrics["efficiencies"].append(aggregated_metrics["efficiency_mean"])
+            self.summary_metrics["bpd_diffs"].append(aggregated_metrics["bpd_diff_mean"])
 
             if self.results_table:
                 self.results_table.add_data(
                     depth or self.config.depth, n_input, n_sum, rank, pivot, physical_batch_size,
-                    matrix_label, orig_times["mean"] * 1000, nystrom_times["mean"] * 1000, speedup,
-                    theoretical_speedup, orig_memory, nystrom_memory, memory_reduction,
-                    orig_flops / 1e9, nystrom_flops / 1e9, 1 - (nystrom_flops / orig_flops),
-                    orig_bpd, nystrom_bpd, bpd_diff, nll_diff.item(), efficiency
+                    matrix_label, orig_times["mean"] * 1000, aggregated_metrics["time_mean"] * 1000,
+                    aggregated_metrics["speedup_mean"],
+                    theoretical_speedup, orig_memory, aggregated_metrics["memory_mean"], memory_reduction,
+                    1, 1, 0, # flops are placeholders
+                    orig_bpd, orig_bpd + aggregated_metrics["bpd_diff_mean"],
+                    aggregated_metrics["bpd_diff_mean"],
+                    aggregated_metrics["nll_diff_mean"],
+                    aggregated_metrics["efficiency_mean"]
                 )
             
             return {"status": "success"}

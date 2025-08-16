@@ -361,6 +361,15 @@ def create_wandb_visualisations(results_table, config) -> None:
             unique_methods,
             error_label,
         )
+        plot_error_vs_size_by_pivot(
+            matrix_sizes,
+            rel_errors,
+            sampling_methods,
+            unique_matrix_sizes,
+            unique_methods,
+            error_label,
+            powers_of_two=config.powers_of_two,
+        )
     if depths is not None:
         unique_depths = sorted(set(depths))
         if rel_errors is not None:
@@ -397,3 +406,70 @@ def create_wandb_visualisations(results_table, config) -> None:
         unique_methods,
         powers_of_two=config.powers_of_two,
     )
+
+
+def plot_error_vs_size_by_pivot(
+    matrix_sizes,
+    errors,
+    sampling_methods,
+    unique_matrix_sizes,
+    unique_methods,
+    error_label,
+    powers_of_two=False,
+):
+    """Plot average error vs matrix size, with one line per pivot method."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    markers = {m: ms for m, ms in zip(unique_methods, ["o", "s", "^", "D", "v"])}
+    linestyles = {m: ls for m, ls in zip(unique_methods, ["-", "--", ":", "-.", ":"])}
+
+    def to_numeric(s):
+        if isinstance(s, str) and "x" in s:
+            return int(s.split("x", 1)[0])
+        if powers_of_two and isinstance(s, str) and "^" in s:
+            return 2 ** int(s.split("^", 1)[1])
+        return int(s)
+
+    numeric_sizes = np.array([to_numeric(s) for s in matrix_sizes])
+    unique_numeric_sizes = sorted(set(numeric_sizes))
+
+    for method in unique_methods:
+        avg_errors = []
+        avg_stds = []
+        for size in unique_numeric_sizes:
+            mask = (numeric_sizes == size) & (sampling_methods == method)
+            if np.any(mask):
+                errors_for_size = errors[mask]
+                avg_errors.append(errors_for_size.mean())
+                avg_stds.append(errors_for_size.std())
+            else:
+                avg_errors.append(np.nan)
+                avg_stds.append(np.nan)
+
+        avg_errors = np.array(avg_errors)
+        avg_stds = np.array(avg_stds)
+        
+        valid_indices = ~np.isnan(avg_errors)
+        plot_sizes = np.array(unique_numeric_sizes)[valid_indices]
+        plot_errors = avg_errors[valid_indices]
+        plot_stds = avg_stds[valid_indices]
+
+        if len(plot_sizes) > 0:
+            ax.plot(
+                plot_sizes,
+                plot_errors,
+                marker=markers.get(method, "o"),
+                linestyle=linestyles.get(method, "-"),
+                label=method,
+            )
+            
+
+    ax.set_xlabel("Matrix Size")
+    ax.set_ylabel(f"Average {error_label}")
+    ax.set_title(f"Average Error vs. Matrix Size by Pivot Method")
+    ax.legend(title="Pivot Method")
+    ax.grid(True, alpha=0.3)
+    ax.set_yscale("log")
+    fig.tight_layout()
+
+    wandb.log({f"charts/error_vs_size_by_pivot": wandb.Image(fig)})
+    plt.close(fig)

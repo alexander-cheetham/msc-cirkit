@@ -14,7 +14,7 @@ class BenchmarkConfig:
     ranks: List[int] = field(default_factory=lambda: [5, 10, 20, 30, 50])
     use_dynamic_ranks: bool = True
     rank_percentages: List[float] = field(
-        default_factory=lambda: [0.1,0.2,0.3,0.6,]#1,0.2, 0.3, 0.6,]
+        default_factory=lambda: [0.01,0.05,0.1,0.2,0.3,0.6,]#1,0.2, 0.3, 0.6,]
     )
 
     # Pivot selection strategy for Nyström approximation
@@ -47,6 +47,7 @@ class BenchmarkConfig:
     experiment_name: str = "benchmark"
     tags: List[str] = field(default_factory=lambda: ["benchmark", "nystrom", "kronecker"])
     notes: str = "Comparing Kronecker product vs Nyström approximation in squared circuits"
+    reps: int = 1
     hostname: str = field(
         default_factory=socket.gethostname,
         metadata={"help": "Hostname of the machine running the benchmark"},
