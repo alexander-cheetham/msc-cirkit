@@ -2,91 +2,10 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from .sampler import kron_l2_sampler,  kron_cur_plan_torch_min
-
-class NystromSumLayer_old(nn.Module):
-    """
-    Block-Nyström low-rank replacement for a fold-summed linear layer.
-    
-    Parameters
-    ----------
-    original_layer : nn.Module
-        A layer whose `weight()` returns a 3-D tensor (F, K_o, K_i).
-    rank : int
-        Target Nyström rank *s*.
-    learnable_rank : bool, optional
-        If True, keeps `rank` as a non-trainable nn.Parameter so it moves
-        with the model state dict; otherwise stores it as a buffer.
-    """
-    def __init__(self, original_layer: nn.Module, rank: int):
-        super().__init__()
-        self.original_layer = original_layer
-        self.semiring = getattr(original_layer, "semiring", None)
-        self.rank = int(rank)                                  
-
-        # --- Keep rank inside the Module state -------------------------------
-        rank_tensor = torch.tensor(self.rank, dtype=torch.int32,
-                                   device=original_layer.weight().device)
-        self.rank_param = nn.Parameter(rank_tensor.float(),
-                                           requires_grad=False) 
-
-        # ---------------------------------------------------------------------
-        # Prepare Nyström factors
-        # ---------------------------------------------------------------------
-        with torch.no_grad():                                   # saves memory 
-            #TODO: IMPROVE THIS BECAUSE IT STILL MATERIALISES THE MATRIX
-            W = original_layer.weight()                         # (F, K_o, K_i)
-            F_, K_o, K_i = W.shape
-            s = self.rank                                       # local alias
-
-            U_lr, V_lr = [], []
-
-            for f in range(F_):
-                W_f = W[f]                                      # (K_o, K_i)
-
-                # 0. random pivot indices  -------------------------------
-                I = torch.randperm(K_o, device=W_f.device)[:s]
-                J = torch.randperm(K_i, device=W_f.device)[:s]
-                I_c = torch.tensor([i for i in range(K_o) if i not in I],
-                                   device=W_f.device)
-                J_c = torch.tensor([j for j in range(K_i) if j not in J],
-                                   device=W_f.device)
-
-                # 1. SVD of pivot block  -------------------------------
-                A = W_f[I][:, J]                                # (s, s)
-                U, S, Vh = torch.linalg.svd(A, full_matrices=False)  
-
-                # 2. Extend singular vectors ----------------------------
-                L_inv = torch.diag(1.0 / S)
-                F_blk = W_f[I_c][:, J]                          # (K_o-s, s)
-                B_blk = W_f[I][:, J_c]                          # (s, K_i-s)
-                tilde_U = F_blk @ Vh.T @ L_inv
-                tilde_H = L_inv @ U.T @ B_blk
-
-                # 3. Assemble Nyström factors --------------------------
-                C   = torch.cat([A, F_blk], dim=0)              # (K_o, s)
-                R   = torch.cat([A, B_blk], dim=1)              # (s, K_i)
-                A_pinv = torch.linalg.pinv(A)                   # (s, s)
-
-                U_lr.append(C)                                  # (K_o, s)
-                V_lr.append((A_pinv @ R).T)                     # (K_i, s)
-
-
-            # Stack over folds and register as parameters (trainable)
-            self.U = nn.Parameter(torch.stack(U_lr, dim=0))     # (F, K_o, s)
-            self.V = nn.Parameter(torch.stack(V_lr, dim=0))     # (F, K_i, s)
-
-    # -------------------------------------------------------------------------
-    # Forward pass:  x  ->  U_lr V_lrᵀ  ---------------------------------------
-    # -------------------------------------------------------------------------
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        x : Tensor, shape (F, B, K_i)
-        returns : Tensor, shape (F, B, K_o)
-        """
-        # First multiply by Vᵀ  (einsum handles broadcasting)  
-        temp = torch.einsum('fbi,fir->fbr', x, self.V)
-        # Then multiply by U    ---------------------------------------------
-        return torch.einsum('fbr,for->fbo', temp, self.U)
+from cirkit.backend.torch.parameters.parameter import TorchParameter
+from cirkit.backend.torch.parameters.nodes import TorchTensorParameter
+import gc # Added for garbage collection
+from datetime import datetime # Added for logging timestamps
 
 
 from cirkit.backend.torch.layers.inner import TorchSumLayer
@@ -100,9 +19,20 @@ class NystromSumLayer(TorchSumLayer):
         pivot: str = "uniform",
         semiring=None,
     ):
-        # ------------------------------------------------------------------
-        # 0 · Call the parent ctor with the same signature it expects
-        # ------------------------------------------------------------------
+
+        # Create a dummy weight to satisfy the parent constructor
+        dummy_node = TorchTensorParameter(
+            original_layer.num_output_units,
+            original_layer.num_input_units,
+            num_folds=original_layer.num_folds,
+            requires_grad=False,
+        )
+        dummy_weight = TorchParameter(
+            modules=[dummy_node],
+            in_modules={},
+            outputs=[dummy_node],
+        )
+        dummy_weight.reset_parameters()
 
         if semiring is None:
             semiring = original_layer.semiring
@@ -110,7 +40,7 @@ class NystromSumLayer(TorchSumLayer):
             num_input_units=original_layer.num_input_units,
             num_output_units=original_layer.num_output_units,
             arity=original_layer.arity,
-            weight=original_layer.weight,
+            weight=dummy_weight,
             semiring=semiring,
             num_folds=original_layer.num_folds,
         )
@@ -118,19 +48,11 @@ class NystromSumLayer(TorchSumLayer):
         # 1 · Rank bookkeeping
         # ------------------------------------------------------------------
         self.rank = int(rank)
-        self.weight_orig = original_layer.weight()
         self.pivot = pivot
         # buffer → moves with .to()/ .cuda() but is not trainable
         self.register_buffer(
             "rank_param", torch.tensor(self.rank, dtype=torch.int32), persistent=False
         )
-
-        # ------------------------------------------------------------------
-        # 2 · Build Nyström factors from the *dense* weight we just copied
-        # ------------------------------------------------------------------
-        with torch.no_grad():
-            self._build_factors_from(original_layer)
-        del self.weight 
 
     
     # ------------------------------------------------------------------
@@ -320,5 +242,5 @@ class NystromSumLayer(TorchSumLayer):
 
             # --- 5. Finalize Parameters ---
             # Stack over folds and register as parameters (trainable)
-            self.U = nn.Parameter(torch.stack(U_lr, dim=0))
-            self.V = nn.Parameter(torch.stack(V_lr, dim=0))
+            self.register_buffer("U", torch.stack(U_lr, dim=0))
+            self.register_buffer("V", torch.stack(V_lr, dim=0))

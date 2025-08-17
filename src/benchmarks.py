@@ -30,8 +30,8 @@ from cirkit.backend.torch.layers import TorchCategoricalLayer
 from cirkit.utils.scope import Scope
 import faulthandler
 from torch.utils.data import DataLoader, TensorDataset
-import re
 import random
+import gc # Added for garbage collection
 
 LN2 = np.log(2.0)
 import os
@@ -280,6 +280,7 @@ class WandbCircuitBenchmark:
         for i in range(reps):
             print(f"--- Nyström repetition {i+1}/{reps} ---")
             torch.cuda.empty_cache()
+            gc.collect() # Ensure clean slate before compilation
 
             nystrom_circuit = compile_symbolic(symbolic_circuit, device=device, opt=True, rank=rank)
             sync_sumlayer_weights(original_circuit, nystrom_circuit, pivot=pivot, rank=rank)
@@ -289,8 +290,8 @@ class WandbCircuitBenchmark:
             def nystrom_forward():
                 return nystrom_circuit(test_input)
             device_type = 'cuda' if device.startswith('cuda') else 'cpu'
-            nystrom_memory, _ = WandbMemoryProfiler.profile_gpu(nystrom_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(nystrom_forward)
-
+            _, nystrom_memory = WandbMemoryProfiler.profile_gpu(nystrom_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(nystrom_forward)
+            nystrom_memory = nystrom_memory["memory_increase_mb"]
             with torch.no_grad():
                 if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
                     data_test = data_test_mnist
@@ -409,6 +410,7 @@ class WandbCircuitBenchmark:
                 try:
                     print(f"[{datetime.now()}] Attempting ORIGINAL with batch size: {physical_batch_size}", flush=True)
                     torch.cuda.empty_cache()
+                    gc.collect() # Ensure clean slate before creating test input
                     test_input = self.create_test_input(physical_batch_size, n_input, device)
                     
                     orig_times = self.time_forward_pass(original_circuit, test_input, self.config.num_warmup, self.config.num_trials)
@@ -416,8 +418,8 @@ class WandbCircuitBenchmark:
                     def orig_forward():
                         return original_circuit(test_input)
                     device_type = 'cuda' if device.startswith('cuda') else 'cpu'
-                    orig_memory, _ = WandbMemoryProfiler.profile_gpu(orig_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(orig_forward)
-
+                    _ , orig_memory = WandbMemoryProfiler.profile_gpu(orig_forward) if device_type == 'cuda' else WandbMemoryProfiler.profile_cpu(orig_forward)
+                    orig_memory = orig_memory["memory_increase_mb"]
                     with torch.no_grad():
                         if self.config.circuit_structure == "MNIST" or self.config.circuit_structure == "MNIST_COMPLEX":
                             transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (255 * x.view(-1)).long())])
