@@ -12,3 +12,12 @@ logs/
 patches/
 .data/
 model_cache/
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Ignore other common VSCode user-data directories
+.vscode/user-data/
+.vscode/.history/
