@@ -34,10 +34,6 @@ def create_test_input( batch_size: int, input_dim: int, device: str):
 
 
 
-def _flatten_pairs(pairs: torch.Tensor, base: int) -> torch.Tensor:
-    """Convert (k,2) pairs to flat indices using ``base``."""
-    return pairs[:, 0] * base + pairs[:, 1]
-
 def _compute_bpd(model: torch.nn.Module, dataloader: DataLoader, device: str) -> float:
     """Evaluate global bits-per-dimension of ``model`` on ``dataloader``."""
     model.eval()
@@ -57,62 +53,6 @@ def _compute_bpd(model: torch.nn.Module, dataloader: DataLoader, device: str) ->
             count += 1
     
     return (total / (count * data_dim * LN2))
-
-def _evaluate_with_pivots(model: torch.nn.Module, layer_path: str,
-                           I_flat: torch.Tensor, J_flat: torch.Tensor,
-                           dataloader: DataLoader, device: str,return_model=False):
-    """Return BPD for ``model`` where ``layer_path`` is approximated using pivots.
-
-    ``layer_path`` is the dotted module path (as returned by ``named_modules``).
-    """
-    model_copy = copy.deepcopy(model)
-    target = dict(model_copy.named_modules())[layer_path]
-    nystrom = NystromSumLayer(target, rank=len(I_flat),)
-    pivots = [(torch.tensor(I_flat, dtype=torch.long, device=device), torch.tensor(J_flat, dtype=torch.long, device=device))] * target.num_folds
-    nystrom._build_factors_from(target, pivots=pivots)
-    # replace layer
-    parent_path, _, attr = layer_path.rpartition(".")
-    parent = dict(model_copy.named_modules())[parent_path] if parent_path else model_copy
-    setattr(parent, attr, nystrom)
-    # --- DEBUG: Verify layer replacement ---
-    new_layer = dict(model_copy.named_modules())[layer_path]
-    # print(f"DEBUG: Layer '{layer_path}' has been replaced with: {type(new_layer).__name__}")
-    # --- END DEBUG ---
-    if return_model:
-        return _compute_bpd(model_copy, dataloader, device), model_copy
-    else:
-        return _compute_bpd(model_copy, dataloader, device)
-
-def _evaluate_against_local(model: torch.nn.Module, layer_path: str,
-                           dataloader: DataLoader, device: str,rank) -> float:
-    """Return BPD for ``model`` where ``layer_path`` is approximated using pivots.
-
-    ``layer_path`` is the dotted module path (as returned by ``named_modules``).
-    """
-    model_copy = copy.deepcopy(model)
-    target = dict(model_copy.named_modules())[layer_path]
-    nystrom = NystromSumLayer(target, rank=rank,pivot="cur")
-    nystrom._build_factors_from(target,)
-    # replace layer
-    parent_path, _, attr = layer_path.rpartition(".")
-    parent = dict(model_copy.named_modules())[parent_path] if parent_path else model_copy
-    setattr(parent, attr, nystrom)
-    # --- DEBUG: Verify layer replacement ---
-    new_layer = dict(model_copy.named_modules())[layer_path]
-    # print(f"DEBUG: Layer '{layer_path}' has been replaced with: {type(new_layer).__name__}")
-    # --- END DEBUG ---
-    return _compute_bpd(model_copy, dataloader, device)
-
-def _topk_columns_via_l2(M: torch.Tensor, k: int) -> torch.Tensor:
-    """
-    Return flat column indices of ``k`` columns of Kron(M, M) with the largest L2 scores,
-    using torch.linalg.norm for clarity and correctness.
-    """
-    col_l2_norms = torch.linalg.norm(M, ord=2, dim=0)
-    col_l2_norms_sq = col_l2_norms.pow(2)
-    scores = torch.outer(col_l2_norms_sq, col_l2_norms_sq).flatten()
-    topk_indices = torch.topk(scores, k).indices
-    return topk_indices
 
 
 
