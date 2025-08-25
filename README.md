@@ -59,3 +59,44 @@ Run tests:
 ```bash
 .venv/bin/pytest -q
 ```
+
+## Project Structure
+
+```
+/
+├───.gitignore
+├───cirkit/
+├───data/
+├───experiments/
+├───model_cache/
+├───src/
+│   ├───artificial.py
+│   ├───benchmarks.py
+│   ├───circuit_manip.py
+│   ├───circuit_types.py
+│   ├───config.py
+│   ├───nystromlayer.py
+│   ├───sampler.py
+│   └───visualisation.py
+├───tests/
+├───pyproject.toml
+└───README.md
+```
+
+### File and Directory Descriptions
+
+*   **`cirkit/`**: Contains the `cirkit` library, which is a dependency of this project.
+*   **`data/`**: Stores datasets, such as MNIST.
+*   **`experiments/`**: Contains scripts for running benchmarks and other experiments.
+    *   `wand_benchmark.py`: The main script for running benchmarks and logging to Weights & Biases.
+*   **`model_cache/`**: Caches trained models to avoid retraining.
+*   **`src/`**: Contains the core source code for the Nyström approximation and related components.
+    *   `nystromlayer.py`: Implementation of the `NystromSumLayer`, the core of the project.
+    *   `benchmarks.py`: The main benchmarking suite.
+    *   `sampler.py`: Contains different pivot selection strategies for the Nyström method.
+    *   `circuit_types.py`: Defines the different circuit architectures used for benchmarking.
+    *   `config.py`: Defines the configuration for the benchmarks.
+    *   `visualisation.py`: Contains functions for creating plots and visualizations.
+*   **`tests/`**: Contains unit tests for the project.
+*   **`pyproject.toml`**: Defines the project's dependencies and metadata.
+*   **`README.md`**: This file.

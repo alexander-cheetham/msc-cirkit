@@ -8,7 +8,7 @@ from cirkit.templates import data_modalities
 from cirkit.symbolic.circuit import Circuit
 from cirkit.symbolic.layers import GaussianLayer, SumLayer
 from cirkit.templates.region_graph import RandomBinaryTree
-from cirkit.templates.utils import Parameterization, parameterization_to_factory
+from cirkit.templates.utils import Parameterization, parameterization_to_factory,name_to_input_layer_factory
 from helpers import build_circuit_one_sum
 from cirkit.symbolic.circuit import are_compatible
 
@@ -16,8 +16,15 @@ from cirkit.symbolic.circuit import are_compatible
 def define_circuit_one_sum(num_input_units=2, num_sum_units=2):
     rg = RandomBinaryTree(1, depth=None, num_repetitions=1, seed=42)
     rg.build_circuit = MethodType(build_circuit_one_sum, rg)
-    input_factory = lambda scope, n: GaussianLayer(scope=scope, num_output_units=n)
-    p = Parameterization(activation="softmax", initialization="normal")
+    # UNCOMMENT THIS FOR RQ1-3
+    #input_factory = lambda scope, n: GaussianLayer(scope=scope, num_output_units=n)
+
+    # USE THIS FOR RQ4
+    input_layer="categorical"
+    input_kwargs = {"num_categories": 256}
+    input_factory = name_to_input_layer_factory(input_layer, **input_kwargs)
+    # --------------------------------
+    p = Parameterization(dtype='complex', initialization='uniform')
     sum_param_factory = parameterization_to_factory(p)
     return rg.build_circuit(
         input_factory=input_factory,

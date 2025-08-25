@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import traceback
 from typing import List, Dict, Tuple
 from scipy.stats import gaussian_kde
+from tueplots import bundles, figsizes
 
 # --- Mock Imports for Standalone Running ---
 # In your project, replace these with your actual imports
@@ -17,9 +18,30 @@ from torch.nn import Module, Sequential, Linear, ModuleList
 # --- Configuration ---
 CACHE_DIR = "model_cache/checkpoints"
 UNITS_TO_VISUALIZE = [4,8,16,32]
-EPOCHS_TO_VISUALIZE = [1, 5, 10] # Epochs to load from checkpoints
+EPOCHS_TO_VISUALIZE = [ 5, 10] # Epochs to load from checkpoints
 REGION_GRAPH_TYPE = 'quad-tree-4'
-OUTPUT_DIR = "spectral_visualizations_io"
+OUTPUT_DIR = "./results/spectral_visualizations_io2"
+
+def setup_plotting_style(scale=1.0):
+    """Applies tueplots style, disables TeX, and scales all fonts."""
+    plt.rcParams.update(bundles.neurips2024())
+    plt.rcParams.update({"text.usetex": False})
+
+    # Find all font-related size keys and scale them
+    keys_to_scale = [
+        "font.size",
+        "axes.titlesize",
+        "axes.labelsize",
+        "xtick.labelsize",
+        "ytick.labelsize",
+        "legend.fontsize",
+        "figure.titlesize",
+    ]
+    for key in keys_to_scale:
+        if key in plt.rcParams:
+            current_size = plt.rcParams[key]
+            if isinstance(current_size, (int, float)):
+                plt.rcParams[key] = current_size * scale
 
 # --- Helper Functions ---
 
@@ -116,27 +138,35 @@ def plot_scree_grid_for_io(
     output_dir: str
 ):
     """
-    Generates a visually appealing grid of scree plots for Input and Output layers.
+    Generates a visually appealing grid of scree plots for Input and Output layers,
+    styled with tueplots for NeurIPS 2024.
     """
-    plt.style.use('seaborn-v0_8-whitegrid')
-    
+     # Set up tueplots style with larger font scaling
     row_labels = [label for label in ["Input Layer", "Output Layer"] if label in target_layers]
     if not row_labels:
         print("  -> No target layers to plot.")
         return
 
+    # --- TUEPLOTS SETUP ---
+    plt.rcParams.update(bundles.neurips2024())
+    plt.rcParams.update({"text.usetex": False})
+    setup_plotting_style(scale=1.5)
+    # --- CHANGE: Doubled the size multipliers to make the figure twice as big ---
+    fig_width = len(epochs) * 2  # 6 inches per column
+    fig_height = len(row_labels)*2 # 5 inches per row
+    
     fig, axes = plt.subplots(
         nrows=len(row_labels),
         ncols=len(epochs),
-        figsize=(len(epochs) * 5, len(row_labels) * 4.5),
         sharex=True,
-        sharey='row'
+        sharey='row',
+        figsize=(fig_width, fig_height)
     )
     if len(row_labels) == 1: axes = np.array([axes])
     if len(epochs) == 1: axes = axes.reshape(-1, 1)
 
     print("\n--- Generating Scree Plot Grid for Input/Output Layers ---")
-
+    handles, labels = [], []
     for row_idx, group_name in enumerate(row_labels):
         layer_name, _ = target_layers[group_name][0]
 
@@ -148,71 +178,57 @@ def plot_scree_grid_for_io(
                 ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
             else:
                 try:
-                    # X-axis: Rank of the singular value (1, 2, 3, ...)
                     ranks = np.arange(1, len(singular_values) + 1)
                     
-                    # Plot the connecting line
-                    ax.plot(ranks, singular_values, marker='', linestyle='-', color='#888888', alpha=0.7, zorder=1)
-                    # Plot the individual points for clarity
-                    ax.scatter(ranks, singular_values, color='#004488', s=15, zorder=2, label='Singular Values')
+                    ax.plot(ranks, singular_values, marker='', linestyle='-')
+                    ax.scatter(ranks, singular_values, s=15)
 
-                    # --- NEW: Calculate and plot the 95% variance line ---
                     if singular_values.size > 1:
-                        # Variance is proportional to the square of the singular values
                         squared_svs = singular_values**2
                         total_variance = np.sum(squared_svs)
-                        
-                        if total_variance > 1e-9: # Avoid division by zero
+                        if total_variance > 1e-9:
                             cumulative_variance_ratio = np.cumsum(squared_svs) / total_variance
-                            
-                            # Find the rank (index + 1) where the ratio exceeds 0.95
-                            # np.searchsorted is efficient for this on a sorted array
                             try:
                                 index_95 = np.searchsorted(cumulative_variance_ratio, 0.95)
                                 rank_95 = index_95 + 1
-                                
-                                # Add a vertical line at that rank
-                                ax.axvline(x=rank_95, color='#D55E00', linestyle='--', linewidth=1.5,
-                                           label=f'95% Variance (Rank {rank_95})', zorder=3)
-                                
+                                ax.axvline(x=rank_95, linestyle='--',color='red',
+                                           label=f'95% Variance \n Rank')
                             except IndexError:
-                                # This would happen if for some reason the threshold is not met,
-                                # which is unlikely with cumsum.
                                 pass 
-                    # --- END of new section ---
                     
-                    # Log scale on Y-axis is crucial for scree plots
-                    # ax.set_yscale('log')
+                    ax.set_yscale('log')
                     
-                    # Ensure x-axis ticks are integers, especially for few SVs
-                    if len(ranks) < 20:
+                    if len(ranks) < 10:
                         ax.set_xticks(ranks)
                         ax.tick_params(axis='x', rotation=45)
+                    h, l = ax.get_legend_handles_labels()
+                    handles.extend(h)
+                    labels.extend(l)
 
                 except Exception as e:
                     print(f"Could not create scree plot for {group_name} at epoch {epoch}: {e}")
                     ax.text(0.5, 0.5, 'Plotting Error', ha='center', va='center', transform=ax.transAxes)
 
-            # --- Formatting ---
             if row_idx == 0:
                 title = "Initial State (Epoch 0)" if epoch == 0 else f"Epoch {epoch}"
-                ax.set_title(title, fontsize=14)
+                ax.set_title(title)
             if col_idx == 0:
-                ax.set_ylabel(f"{group_name}\nSingular Value ", fontsize=12)
-            ax.grid(True, which='major', linestyle='-', linewidth=0.7)
-            ax.grid(True, which='minor', linestyle=':', linewidth=0.5)
+                ax.set_ylabel(f"{group_name}\nSingular Value")
+    from collections import OrderedDict
+    by_label = OrderedDict(zip(labels, handles))
+    # fig.legend(by_label.values(), 
+    # by_label.keys(), loc='center right',bbox_to_anchor=(2, 0.5))   # push outside the figure fontsize='small')
 
-    fig.suptitle(f'Scree Plots of Layer Weights (Units: {n_units})', fontsize=18, y=1.0)
-    fig.supxlabel('Singular Value Rank (Largest to Smallest)', fontsize=14, y=0.01)
-    plt.tight_layout(rect=[0.03, 0.03, 1, 0.96])
-
+    fig.suptitle(f'Scree Plots of Layer Weights (Units: {n_units})')
+    fig.supxlabel('Singular Value Rank (Largest to Smallest)')
+    fig.set_layout_engine('constrained')
+    
     os.makedirs(output_dir, exist_ok=True)
     plot_filename = f"scree_plot_grid_units-{n_units}.png"
     output_path = os.path.join(output_dir, plot_filename)
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"  -> Saved scree plot grid to {output_path}")
-
 # --- Main Execution Logic ---
 
 def main():

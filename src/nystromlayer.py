@@ -14,7 +14,7 @@ class NystromSumLayer(TorchSumLayer):
         self,
         original_layer: TorchSumLayer,
         *,
-        rank: int,
+        rank,
         learnable_rank: bool = False,
         pivot: str = "uniform",
         semiring=None,
@@ -47,7 +47,7 @@ class NystromSumLayer(TorchSumLayer):
         # ------------------------------------------------------------------
         # 1 · Rank bookkeeping
         # ------------------------------------------------------------------
-        self.rank = int(rank)
+        self.rank = rank
         self.pivot = pivot
         # buffer → moves with .to()/ .cuda() but is not trainable
         self.register_buffer(
@@ -148,6 +148,8 @@ class NystromSumLayer(TorchSumLayer):
                     # --- 1. Sample Pivots ---
                     if pivots is not None:
                         I, J = pivots[f]
+                        row_scale = torch.ones(I.shape[0], dtype=M_f.dtype, device=M_f.device)
+                        col_scale = torch.ones(J.shape[0], dtype=M_f.dtype, device=M_f.device)
                     else:
                         # Using L1 norm sampler for better stability
                         if self.pivot == "l2":
@@ -178,29 +180,28 @@ class NystromSumLayer(TorchSumLayer):
 
                     #print(f"Attempt {attempt + 1}/{MAX_RETRIES}: Condition Number = {cond_num}")
 
-                    if not torch.isinf(cond_num) and cond_num < CONDITION_THRESHOLD:
+                    if True:
                         # --- 3. SUCCESS PATH: Build Nyström Factors ---
                         #print("Condition number acceptable. Proceeding with Nyström.")
-                        mask_I = torch.ones(K_o, dtype=torch.bool, device=M_f.device)
-                        mask_I[I] = False
-                        I_c = mask_I.nonzero(as_tuple=False).flatten()
-                        mask_J = torch.ones(K_i, dtype=torch.bool, device=M_f.device)
-                        mask_J[J] = False
-                        J_c = mask_J.nonzero(as_tuple=False).flatten()
-
-                        F_blk = kron_block(I_c, J)
-                        B_blk = kron_block(I, J_c)
-
-                        C = torch.cat([A, F_blk], dim=0)
-                        C = C * col_scale[None, :]      
-                        R = torch.cat([A, B_blk], dim=1)
-                        R = row_scale[:, None] * R   
-                        
                         A = (row_scale[:, None] * A) * col_scale[None, :]
                         A_pinv = torch.linalg.pinv(A, rcond=1e-6)
 
-                        U_f = C
-                        V_f = (A_pinv @ R).T
+                        
+                        # U  K_o x s (all rows, pivot columns)
+                        # V  K_i x s (all columns, pivot rows)
+                        
+                        # For U, we need the full column space defined by the sampled columns J
+                        all_rows = torch.arange(K_o, device=M_f.device)
+                        U_f = kron_block(all_rows, J) # K_o x s
+                        U_f = U_f * col_scale[None, :] # Apply column scaling for CUR
+                        
+                        # For R, we need the full row space defined by the sampled rows I
+                        all_cols = torch.arange(K_i, device=M_f.device)
+                        R_f = kron_block(I, all_cols) # s x K_i
+                        R_f = row_scale[:, None] * R_f # Apply row scaling for CUR
+
+                        # Now, construct the final V factor
+                        V_f = (A_pinv @ R_f).T # (K_i x s)
                         
                         U_lr.append(U_f)
                         V_lr.append(V_f)

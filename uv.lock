@@ -1409,7 +1409,6 @@ source = { editable = "cirkit" }
 dependencies = [
     { name = "einops" },
     { name = "graphviz" },
-    { name = "numpy" },
     { name = "opt-einsum" },
     { name = "scipy" },
     { name = "torch" },
@@ -1460,7 +1459,6 @@ requires-dist = [
     { name = "mkdocstrings-python", marker = "extra == 'docs'" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.7.1" },
     { name = "notebook", marker = "extra == 'notebooks'" },
-    { name = "numpy", specifier = ">=2.1.0" },
     { name = "opt-einsum", specifier = ">=3.4.0" },
     { name = "pandas", marker = "extra == 'notebooks'" },
     { name = "pydocstyle", extras = ["toml"], marker = "extra == 'dev'", specifier = "~=6.3.0" },
@@ -2177,10 +2175,14 @@ dependencies = [
     { name = "torch" },
     { name = "torchvision" },
     { name = "tqdm" },
+    { name = "tueplots" },
     { name = "wandb" },
 ]
 
 [package.optional-dependencies]
+dev = [
+    { name = "debugpy" },
+]
 graphviz = [
     { name = "pygraphviz" },
 ]
@@ -2190,6 +2192,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "debugpy", marker = "extra == 'dev'" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "libcirkit", editable = "cirkit" },
     { name = "matplotlib", specifier = ">=3.10.1" },
@@ -2198,9 +2201,10 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "torchvision", specifier = ">=0.21.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "tueplots" },
     { name = "wandb", specifier = ">=0.17" },
 ]
-provides-extras = ["test", "graphviz"]
+provides-extras = ["test", "graphviz", "dev"]
 
 [[package]]
 name = "opt-einsum"
@@ -3571,6 +3575,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/2e/757d2280d4fefe7d33af7615124e7e298ae7b8e3bc4446cdb8e88b0f9bab/triton-3.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8009a1fb093ee8546495e96731336a33fb8856a38e45bb4ab6affd6dbc3ba220", size = 253157636, upload-time = "2025-01-22T19:12:51.322Z" },
     { url = "https://files.pythonhosted.org/packages/06/00/59500052cb1cf8cf5316be93598946bc451f14072c6ff256904428eaf03c/triton-3.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8d9b215efc1c26fa7eefb9a157915c92d52e000d2bf83e5f69704047e63f125c", size = 253159365, upload-time = "2025-01-22T19:13:24.648Z" },
     { url = "https://files.pythonhosted.org/packages/c7/30/37a3384d1e2e9320331baca41e835e90a3767303642c7a80d4510152cbcf/triton-3.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e5dfa23ba84541d7c0a531dfce76d8bcd19159d50a4a8b14ad01e91734a5c1b0", size = 253154278, upload-time = "2025-01-22T19:13:54.221Z" },
+]
+
+[[package]]
+name = "tueplots"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/da/80c5ddb1df690c240cf91f2ba82bb61df273689618388d676241d92f7514/tueplots-0.2.1-py3-none-any.whl", hash = "sha256:3f7ba811c70bad75140fbd016cf220affd3e94a70576ff33b1c13ba0c16b0920", size = 16892, upload-time = "2025-07-14T06:01:53.158Z" },
 ]
 
 [[package]]

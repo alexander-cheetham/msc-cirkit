@@ -12,6 +12,7 @@ dependencies = [
     "torchvision>=0.21.0",
     "tqdm>=4.67.1",
     "libcirkit",
+    "tueplots",
     
 ]
 [tool.setuptools.packages.find]
@@ -31,3 +32,4 @@ members = ["cirkit"]     # ← include the inner folder as a workspace member
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
 graphviz = ["pygraphviz"]
+dev = ["debugpy"]

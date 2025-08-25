@@ -32,6 +32,7 @@ import faulthandler
 from torch.utils.data import DataLoader, TensorDataset
 import random
 import gc # Added for garbage collection
+import re
 
 LN2 = np.log(2.0)
 import os
@@ -49,7 +50,7 @@ def load_mnist_weights_for_one_sum(one_sum_circuit: torch.nn.Module, mnist_check
     print(f"--- Loading MNIST weights for one_sum circuit from {mnist_checkpoint_path} ---")
 
     # 1. Parse n_input and n_sum from the checkpoint path
-    match = re.search(r'mnist_(\d+)_(\d+)_epoch10.pt', os.path.basename(mnist_checkpoint_path))
+    match = re.search(r'mnist_complex_(\d+)_(\d+)_epoch10.pt', os.path.basename(mnist_checkpoint_path))
     if not match:
         raise ValueError(f"Could not parse n_input and n_sum from checkpoint path: {mnist_checkpoint_path}")
     mnist_n_input = int(match.group(1))
@@ -60,7 +61,7 @@ def load_mnist_weights_for_one_sum(one_sum_circuit: torch.nn.Module, mnist_check
     checkpoint = torch.load(mnist_checkpoint_path, map_location=device)
     
     # 3. Create a temporary instance of the MNIST_COMPLEX circuit to hold the weights
-    mnist_builder = CIRCUIT_BUILDERS["MNIST"] 
+    mnist_builder = CIRCUIT_BUILDERS["MNIST_COMPLEX"] 
     mnist_symbolic = mnist_builder(num_input_units=mnist_n_input, num_sum_units=mnist_n_sum,region_graph="quad-tree-4")
     mnist_symbolic = SF.multiply(mnist_symbolic, mnist_symbolic)  # Scale the weights by 0.5
     mnist_circuit = compile_symbolic(mnist_symbolic, device=device)
@@ -121,7 +122,7 @@ def compile_symbolic(circuit: Circuit, *, device: str, rank: int | None = None, 
 
 
 def sync_sumlayer_weights(
-    original: nn.Module, nystrom: nn.Module, *, pivot: str = "uniform", rank: int | None = None
+    original: nn.Module, nystrom: nn.Module, *, pivot: str = "uniform", rank: int | None = None, pivots: List | None = None
 ) -> None:
     """Copy weights from ``original`` to ``nystrom`` for matching layers."""
     # Sync for TorchSumLayer and NystromSumLayer
@@ -143,7 +144,11 @@ def sync_sumlayer_weights(
                 n.rank = int(rank)
                 n.rank_param.data.fill_(n.rank)
             n.pivot = pivot
-            n._build_factors_from(o)
+            if pivots is not None:
+                print("Using provided pivots for weight sync.")
+                n._build_factors_from(o,pivots)
+            else:
+                n._build_factors_from(o)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
         except Exception as e:
@@ -317,16 +322,16 @@ class WandbCircuitBenchmark:
             if 'nyst_batches' in locals(): del nyst_batches
             torch.cuda.empty_cache()
 
-            nll_orig = -(orig_output - Z_bok_orig[0][0].real)
-            nll_nystrom = -(nystrom_output - Z_bok_nys[0][0].real)
+            nll_orig = -(orig_output.real - Z_bok_orig[0][0].real)
+            nll_nystrom = -(nystrom_output.real - Z_bok_nys[0][0].real)
             nll_diff_per_sample = (nll_nystrom - nll_orig).abs()
             nll_diff = nll_diff_per_sample.mean().item()
 
             data_dim = n_input ** 2
             if self.config.circuit_structure in ("MNIST", "MNIST_COMPLEX"):
                 data_dim = 784
-            orig_bpd = (-orig_output.mean() / (data_dim * LN2)).item()
-            nystrom_bpd = (-nystrom_output.mean() / (data_dim * LN2)).item()
+            orig_bpd = (-nll_orig.mean() / (data_dim * LN2)).item()
+            nystrom_bpd = (-nll_nystrom.mean() / (data_dim * LN2)).item()
             bpd_diff = abs(orig_bpd - nystrom_bpd)
 
             speedup = orig_times["mean"] / nystrom_times["mean"]
